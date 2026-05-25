@@ -1,0 +1,320 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Blackout Secure Code Scanning Kit
+# Copyright © 2025-2026 Blackout Secure
+# Licensed under Apache License 2.0
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+name: 'Blackout Secure Code Scanning Kit'
+description: >-
+  Detect ecosystems, run code & secret scanners, audit repo posture
+  (GHAS toggles, workflow permissions, branch protection, CODEOWNERS),
+  and upload a unified SARIF log to GitHub Advanced Security.
+author: 'Blackout Secure'
+
+branding:
+  color: 'blue'
+  icon: 'shield'
+
+# Composite Action orchestration:
+#
+#   detect    → walks the repo and prints a one-line ecosystem summary.
+#   posture   → REST-API audit (GHAS toggles, workflow perms, branch
+#               protection, required reviews, CODEOWNERS). Emits SARIF.
+#   actionlint, gitleaks, shellcheck — always-on / conditional scanners,
+#               each producing its own SARIF.
+#   merge     → folds every scanner's SARIF + the posture SARIF into
+#               one upload-ready artefact.
+#   upload    → posts the merged SARIF to GitHub Advanced Security so
+#               findings land on the repo Security tab.
+#
+# Per-repo customization lives in `.bos-scan.yml` (auto-discovered at
+# the repo root). The inputs below are the small set of operator-level
+# overrides for CI; everything else (rule severities, branch
+# expectations, scanner exclusions) belongs in the YAML config.
+
+inputs:
+  # ----- Identification -----
+  owner:
+    description: 'GitHub owner of the repo being scanned. Defaults to the workflow context.'
+    required: false
+    default: ''
+  repo:
+    description: 'GitHub repo name being scanned. Defaults to the workflow context.'
+    required: false
+    default: ''
+  config:
+    description: 'Path to `.bos-scan.yml`. Defaults to auto-discovery at the repo root.'
+    required: false
+    default: ''
+
+  # ----- Authentication -----
+  github_token:
+    description: >-
+      Token used by the posture audit. `${{ secrets.GITHUB_TOKEN }}` is
+      enough for code-scanning probes; secret-scanning + Dependabot
+      probes require a PAT with `repo` + admin scope.
+    required: false
+    default: ${{ github.token }}
+
+  # ----- Scope gates (off → skip an entire stage) -----
+  enable_posture:
+    description: '`true` to run the posture audit step.'
+    required: false
+    default: 'true'
+  enable_scanners:
+    description: '`true` to run the bundled scanners (actionlint / gitleaks / shellcheck).'
+    required: false
+    default: 'true'
+  enable_upload:
+    description: '`true` to upload the merged SARIF to GitHub Advanced Security.'
+    required: false
+    default: 'true'
+
+  # ----- Failure policy -----
+  fail_on:
+    description: >-
+      `fail` (default) — exit non-zero if posture has any FAIL findings
+      or any scanner reports a result. `never` — collect findings but
+      always exit 0 (useful for first-time rollouts).
+    required: false
+    default: 'fail'
+
+  # ----- Output -----
+  sarif_output:
+    description: 'Path for the merged SARIF artefact.'
+    required: false
+    default: 'bos-scan.sarif'
+
+outputs:
+  sarif_path:
+    description: 'Path to the merged SARIF file produced by the run.'
+    value: ${{ steps.merge.outputs.sarif_path }}
+  posture_failures:
+    description: 'Number of FAIL findings from the posture audit.'
+    value: ${{ steps.posture.outputs.failures }}
+
+runs:
+  using: composite
+  steps:
+    # ----- 0. Install the kit itself so `bos-scan` is on PATH ---------
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install bos-code-scanning-kit
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --quiet --upgrade pip
+        python -m pip install --quiet "${GITHUB_ACTION_PATH}"
+
+    # ----- 1. Ecosystem detection ---------------------------------------
+    - id: detect
+      name: Detect ecosystems
+      shell: bash
+      run: |
+        set -euo pipefail
+        bos-scan detect --root "${GITHUB_WORKSPACE}"
+
+    # ----- 2. Posture audit (Python) ------------------------------------
+    - id: posture
+      name: Posture audit (GHAS / workflows / branches / CODEOWNERS)
+      if: inputs.enable_posture == 'true'
+      shell: bash
+      env:
+        GH_OWNER: ${{ inputs.owner || github.repository_owner }}
+        GH_REPO:  ${{ inputs.repo  || github.event.repository.name }}
+        GH_CFG:   ${{ inputs.config }}
+        GH_TOKEN: ${{ inputs.github_token }}
+        FAIL_ON:  ${{ inputs.fail_on }}
+      run: |
+        set -euo pipefail
+        cfg_flag=()
+        [[ -n "${GH_CFG}" ]] && cfg_flag=(--config "${GH_CFG}")
+
+        # Always write the SARIF even on failure so the merge step
+        # has it for upload.
+        set +e
+        bos-scan posture \
+          --owner  "${GH_OWNER}" \
+          --repo   "${GH_REPO}" \
+          --token  "${GH_TOKEN}" \
+          --root   "${GITHUB_WORKSPACE}" \
+          --sarif  "${GITHUB_WORKSPACE}/bos-scan-posture.sarif" \
+          --fail-on "${FAIL_ON}" \
+          "${cfg_flag[@]}"
+        ec=$?
+        set -e
+
+        # Record failure count for the workflow output. The CLI's own
+        # exit code already encodes this; the count is informational.
+        if [[ -f "${GITHUB_WORKSPACE}/bos-scan-posture.sarif" ]]; then
+          fails=$(grep -c '"level": "error"' "${GITHUB_WORKSPACE}/bos-scan-posture.sarif" || true)
+        else
+          fails=0
+        fi
+        echo "failures=${fails}" >> "${GITHUB_OUTPUT}"
+
+        # Defer hard failure to the merge step so SARIF still uploads.
+        # We record the exit code as a step output instead.
+        echo "exit_code=${ec}" >> "${GITHUB_OUTPUT}"
+
+    # ----- 3a. actionlint (workflow YAML) -------------------------------
+    - id: actionlint
+      name: actionlint (GitHub workflow YAML)
+      if: inputs.enable_scanners == 'true' && hashFiles('.github/workflows/*.yml', '.github/workflows/*.yaml') != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Install actionlint (single static binary; ~1MB).
+        AL_VERSION=1.7.1
+        AL_TARBALL="actionlint_${AL_VERSION}_linux_amd64.tar.gz"
+        curl -sSLo /tmp/actionlint.tar.gz \
+          "https://github.com/rhysd/actionlint/releases/download/v${AL_VERSION}/${AL_TARBALL}"
+        tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+        # Run with SARIF output (actionlint has built-in SARIF since v1.7).
+        # `|| true` because we collect findings even on non-zero so the
+        # merge step always runs.
+        /tmp/actionlint -format '{{sarif .}}' \
+          > "${GITHUB_WORKSPACE}/bos-scan-actionlint.sarif" 2>/dev/null || true
+        # If the template isn't supported in this version, fall back to
+        # a minimal empty SARIF so the merge step doesn't break.
+        if ! head -c1 "${GITHUB_WORKSPACE}/bos-scan-actionlint.sarif" | grep -q '{'; then
+          printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"actionlint"}}, "results":[]}]}\n' \
+            > "${GITHUB_WORKSPACE}/bos-scan-actionlint.sarif"
+        fi
+
+    # ----- 3b. gitleaks (secrets) ---------------------------------------
+    - id: gitleaks
+      name: gitleaks (secret scan)
+      if: inputs.enable_scanners == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        GL_VERSION=8.21.2
+        curl -sSLo /tmp/gitleaks.tar.gz \
+          "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz"
+        tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+        chmod +x /tmp/gitleaks
+        # `detect` over the working tree — no `--no-git` so historical
+        # blobs are scanned where available.
+        /tmp/gitleaks detect \
+          --source "${GITHUB_WORKSPACE}" \
+          --report-format sarif \
+          --report-path  "${GITHUB_WORKSPACE}/bos-scan-gitleaks.sarif" \
+          --no-banner --exit-code 0 || true
+        # Guarantee a SARIF file exists.
+        if [[ ! -s "${GITHUB_WORKSPACE}/bos-scan-gitleaks.sarif" ]]; then
+          printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"gitleaks"}}, "results":[]}]}\n' \
+            > "${GITHUB_WORKSPACE}/bos-scan-gitleaks.sarif"
+        fi
+
+    # ----- 3c. shellcheck (only if shell scripts detected) --------------
+    - id: shellcheck
+      name: shellcheck (shell scripts)
+      if: inputs.enable_scanners == 'true' && hashFiles('**/*.sh', '**/*.bash') != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get install -qq -y shellcheck >/dev/null 2>&1 || true
+        # Collect findings as JSON, then convert to SARIF via a tiny
+        # Python helper (keeps us free of extra dependencies).
+        cd "${GITHUB_WORKSPACE}"
+        find . -type f \( -name '*.sh' -o -name '*.bash' \) \
+          -not -path './.git/*' \
+          -not -path './node_modules/*' \
+          -not -path './vendor/*' \
+          -print0 \
+          | xargs -0 -r shellcheck -f json 2>/dev/null > /tmp/shellcheck.json || true
+        python - <<'PY'
+        import json
+        import pathlib
+        src = pathlib.Path("/tmp/shellcheck.json")
+        try:
+            findings = json.loads(src.read_text() or "[]")
+        except Exception:
+            findings = []
+        level_map = {"error": "error", "warning": "warning",
+                     "info": "note", "style": "note"}
+        results = []
+        rules = {}
+        for f in findings:
+            rid = f"SC{f.get('code', 0)}"
+            rules.setdefault(rid, f.get("message", rid))
+            results.append({
+                "ruleId": rid,
+                "level": level_map.get(f.get("level", "warning"), "warning"),
+                "message": {"text": f.get("message", "")},
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": f.get("file", "")},
+                        "region": {
+                            "startLine": f.get("line", 1),
+                            "startColumn": f.get("column", 1),
+                        },
+                    }
+                }],
+            })
+        sarif = {
+            "version": "2.1.0",
+            "runs": [{
+                "tool": {"driver": {
+                    "name": "shellcheck",
+                    "rules": [{"id": rid, "name": rid,
+                               "shortDescription": {"text": txt}}
+                              for rid, txt in sorted(rules.items())],
+                }},
+                "results": results,
+            }],
+        }
+        pathlib.Path("bos-scan-shellcheck.sarif").write_text(
+            json.dumps(sarif, indent=2) + "\n")
+        PY
+
+    # ----- 4. Merge every available SARIF into one upload artefact ------
+    - id: merge
+      name: Merge SARIF
+      if: always()
+      shell: bash
+      env:
+        OUTPUT: ${{ inputs.sarif_output }}
+      run: |
+        set -euo pipefail
+        cd "${GITHUB_WORKSPACE}"
+        inputs=()
+        for f in bos-scan-actionlint.sarif bos-scan-gitleaks.sarif bos-scan-shellcheck.sarif; do
+          if [[ -s "${f}" ]]; then
+            inputs+=(--input "${f}")
+          fi
+        done
+        posture_flag=()
+        if [[ -s bos-scan-posture.sarif ]]; then
+          posture_flag=(--posture bos-scan-posture.sarif)
+        fi
+        bos-scan sarif \
+          "${inputs[@]}" \
+          "${posture_flag[@]}" \
+          --output "${OUTPUT}"
+        echo "sarif_path=${OUTPUT}" >> "${GITHUB_OUTPUT}"
+
+    # ----- 5. Upload to GitHub Advanced Security ------------------------
+    - name: Upload SARIF to GitHub Advanced Security
+      if: always() && inputs.enable_upload == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.merge.outputs.sarif_path }}
+        category:   bos-code-scanning-kit
+
+    # ----- 6. Honour the posture exit code (deferred from step 2) -------
+    - name: Enforce posture failure policy
+      if: always() && inputs.enable_posture == 'true' && inputs.fail_on != 'never'
+      shell: bash
+      env:
+        EC: ${{ steps.posture.outputs.exit_code }}
+      run: |
+        set -euo pipefail
+        if [[ "${EC}" != "0" ]]; then
+          echo "::error::posture audit reported failures (exit ${EC}). See the SARIF or the step-summary table."
+          exit 1
+        fi

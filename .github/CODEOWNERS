@@ -1,0 +1,4 @@
+# CODEOWNERS for bos-code-scanning-kit
+#
+# Repo-wide default — every PR pings the security team.
+* @blackoutsecure/security
