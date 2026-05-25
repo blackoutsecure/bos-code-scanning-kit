@@ -98,7 +98,7 @@ runs:
   steps:
     # ----- 0. Install the kit itself so `bos-scan` is on PATH ---------
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: '3.12'
 
