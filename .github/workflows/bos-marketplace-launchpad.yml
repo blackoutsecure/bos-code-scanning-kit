@@ -85,10 +85,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
-      # Cascade required by the launchpad's `codeql` sub-job (see
-      # `enable_codeql: true` below). The reusable workflow's
-      # effective permissions are min(caller's job, reusable's job),
-      # so omitting these here would silently disable SARIF upload.
+      # Cascade required by the launchpad's `security_scan` sub-job
+      # (see `enable_security_scan: true` below). The reusable
+      # workflow's effective permissions are min(caller's job,
+      # reusable's job), so omitting these here would silently disable
+      # SARIF upload.
       security-events: write
       actions: read
     with:
@@ -101,14 +102,25 @@ jobs:
       # ----- Per-repo customization (single source of truth) -----
       runtime_artifact_dir: 'src'
 
-      # ----- CodeQL (consolidated via launchpad) -----
-      # Replaces the per-repo `codeql.yml` workflow. Default languages
-      # [python, actions] cover `src/scan_kit/` + composite action.yml
+      # ----- Security scan stage — CodeQL only (producer-kit pattern) -----
+      # Producer-kit escape hatch: this repo PUBLISHES
+      # `blackoutsecure/bos-code-scanning-kit@v1`, so we must NOT run
+      # the published @v1 composite against our own dev source
+      # (`self-scan.yml` already dogfoods the in-tree `./` composite
+      # against dev code). We DO want CodeQL coverage via the
+      # launchpad, so:
+      #   * enable_security_scan:               true   — turn on the stage
+      #   * security_scan_enable_kit_composite: false  — skip the
+      #                                                   composite sub-job
+      #   * security_scan_codeql_languages:     [python, actions]
+      #                                                   — run CodeQL
+      # Default languages cover `src/scan_kit/` + composite action.yml
       # + workflow YAML. Findings land in the Security tab alongside
       # this repo's other SARIF producers (`self-scan.yml` posture +
       # scanner output).
-      enable_codeql:    true
-      codeql_languages: '[python, actions]'
+      enable_security_scan:               true
+      security_scan_enable_kit_composite: false
+      security_scan_codeql_languages:     '[python, actions]'
 
       # ----- Community-health files inherited from blackoutsecure/.github
       # CONTRIBUTING.md / SECURITY.md / CODE_OF_CONDUCT.md / SUPPORT.md /

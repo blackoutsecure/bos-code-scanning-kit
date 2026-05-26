@@ -89,6 +89,22 @@ jobs:
 That's it. The kit auto-discovers your ecosystem, runs every applicable
 scanner, audits posture, and uploads a single SARIF.
 
+### Version pinning
+
+Pick a `uses:` ref shape based on how strict your supply-chain posture
+needs to be. All three forms are supported equally.
+
+| Form | Example | When to use |
+| ---- | ------- | ----------- |
+| **Floating major (default)** | `blackoutsecure/bos-code-scanning-kit@v1` | Friendly default. Auto-tracks every v1.x.y patch + minor release as we ship bug fixes and new rules. Recommended for most callers. |
+| **Immutable tag** | `blackoutsecure/bos-code-scanning-kit@v1.0.0` | Pin to a specific release. Predictable scan results across runs; requires manual bumps for new fixes. Recommended when failed scans break critical pipelines. |
+| **SHA-pinned** | `blackoutsecure/bos-code-scanning-kit@<40-char-sha> # v1.0.0` | Strictest. Survives even a malicious tag-move on the kit repo (the [tj-actions/changed-files class of supply-chain attack][supply-chain-class]). Recommended for regulated / high-security callers. Use Dependabot's `package-ecosystem: github-actions` to keep the pin current. |
+
+[supply-chain-class]: https://www.cisa.gov/news-events/cybersecurity-advisories/aa25-077a
+
+The SHA for any tag is `git rev-list -n 1 v1.0.0` against this repo, or
+the `commit` field of the GitHub Release JSON.
+
 ## ⚙️ Action inputs
 
 <!-- BEGIN action-inputs -->
@@ -143,22 +159,43 @@ Severities can be overridden per rule in `.bos-scan.yml`.
 `PS000` is reserved for tooling errors (e.g. missing token) and is
 always emitted at `error` severity.
 
-## 🧪 Bundled scanner reference
+## 🧪 Supported code scanning
 
-| Scanner    | Runs when…                                                          | Findings rule prefix |
-| ---------- | ------------------------------------------------------------------- | -------------------- |
-| actionlint | `.github/workflows/*.{yml,yaml}` exist                              | actionlint-native    |
-| gitleaks   | always (when `enable_scanners` is `true`)                           | gitleaks-native      |
-| shellcheck | `**/*.sh` or `**/*.bash` exist                                      | `SCNNNN`             |
+### Scanner roster
 
-Each scanner is downloaded as a pinned single binary at run time
-(actionlint `v1.7.1`, gitleaks `v8.21.2`) or installed via `apt`
-(shellcheck). Output is normalized to SARIF 2.1.0 and merged with the
-posture findings before upload.
+Every scanner output is normalised to SARIF 2.1.0 and merged with the
+posture findings into a single upload artefact (`bos-scan.sarif` by
+default). All third-party binaries are version-pinned and downloaded
+fresh per run; no scanner is sourced from `latest`.
 
-**Roadmap (v1.1+):** CodeQL, Trivy, Checkov, osv-scanner, hadolint,
-Scorecard SARIF. Already scaffolded in the registry; rule fan-out
-shipping in subsequent minor releases.
+| Scanner            | Status   | Version   | Triggered when…                                              | What it scans                                                                          | Rule prefix         |
+| ------------------ | -------- | --------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------- |
+| **actionlint**     | ✅ v1.0  | `v1.7.1`  | `.github/workflows/*.{yml,yaml}` exists                      | GitHub Actions workflow YAML (syntax, expressions, embedded `run:` shell)              | `actionlint-native` |
+| **gitleaks**       | ✅ v1.0  | `v8.21.2` | Always (when `enable_scanners: true`)                        | Secrets across the working tree (API keys, tokens, private keys, etc.)                 | `gitleaks-native`   |
+| **shellcheck**     | ✅ v1.0  | `v0.10.0` | `**/*.sh` or `**/*.bash` exists                              | Shell-script issues (POSIX compliance, quoting, race conditions)                       | `SCNNNN`            |
+| **CodeQL**         | 🛠 v1.1  | _pending_ | Any detected language maps to a CodeQL target (see below)    | Semantic source-code scan via GitHub's CodeQL engine                                   | `codeql-*`          |
+| **Trivy**          | 🛠 v1.1  | _pending_ | `Dockerfile*` or `compose.{yml,yaml}` exists                 | Container image CVEs + IaC misconfigurations                                           | `trivy-*`           |
+| **Checkov**        | 🛠 v1.1  | _pending_ | `*.tf`, `k8s/` or `kubernetes/` manifests, or `Chart.yaml`   | IaC policy + misconfigurations (Terraform / Kubernetes / Helm)                         | `CKV_*`             |
+| **osv-scanner**    | 🛠 v1.1  | _pending_ | Any package-manager lockfile present (see detection below)   | Known-vulnerability cross-reference against the [OSV](https://osv.dev) database        | `osv-*`             |
+| **hadolint**       | 🛠 v1.1  | _pending_ | `Dockerfile*` exists                                         | Dockerfile linting (best practices, layer hygiene)                                     | `DL*`               |
+| **Scorecard SARIF**| 🛠 v1.1  | _pending_ | Always (when enabled)                                        | OpenSSF [Scorecard](https://github.com/ossf/scorecard) checks merged with posture      | `scorecard-*`       |
+
+`✅ v1.0` = shipping today. `🛠 v1.1` = scaffolded in the registry,
+fan-out rolling out across the v1.1.x line.
+
+### Ecosystem detection coverage
+
+The scanner roster above is driven by the ecosystem detector
+([`src/scan_kit/detect.py`](src/scan_kit/detect.py)), which classifies
+the working tree along three axes. Anything not in this list will be
+silently ignored.
+
+| Axis              | Recognised values                                                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Languages         | `python` · `javascript` · `typescript` · `go` · `java` · `csharp` · `ruby` · `rust` · `shell`                                      |
+| Build artefacts   | Dockerfile · docker-compose · GitHub workflows · Terraform · Kubernetes manifests · Helm charts · shell scripts                    |
+| Package managers  | `pip` · `pyproject` · `poetry` · `npm` · `yarn` · `pnpm` · `go modules` · `maven` · `gradle` · `cargo` · `bundler` · `nuget`       |
+| CodeQL targets    | `python` · `javascript-typescript` · `go` · `java-kotlin` · `csharp` · `ruby` · `rust` (mapped from detected languages)            |
 
 ## 📝 `.bos-scan.yml` schema
 
