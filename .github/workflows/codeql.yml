@@ -3,7 +3,7 @@
 # Replaces what would otherwise be a ~90-line inline CodeQL workflow
 # with a ~30-line subscribe-and-forward wrapper. All CodeQL invocation
 # logic (matrix, permissions, SHA pins, queries) lives in
-# `blackoutsecure/bos-automation-hub/.github/workflows/repo-security-scan.yml`
+# `blackoutsecure/bos-automation-hub/.github/workflows/bos-launchpad-code-scan.yml`
 # so a single hub commit propagates pin / version bumps to every kit
 # on next run.
 #
@@ -35,7 +35,7 @@
 #   uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
 #
 # Bump the SHAs above in lockstep with
-# `bos-automation-hub/.github/workflows/repo-security-scan.yml`.
+# `bos-automation-hub/.github/workflows/bos-launchpad-code-scan.yml`.
 
 name: CodeQL
 
@@ -55,7 +55,7 @@ concurrency:
 
 jobs:
   analyze:
-    uses: blackoutsecure/bos-automation-hub/.github/workflows/repo-security-scan.yml@main
+    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-launchpad-code-scan.yml@main
     permissions:
       security-events: write
       contents: read

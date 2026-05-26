@@ -1,7 +1,7 @@
 # Blackout Secure Marketplace Launchpad caller for a Python composite Action.
 #
 # Thin (~60-line) event-trigger wrapper around the hub-side reusable
-# bos-marketplace-launchpad.yml in blackoutsecure/bos-automation-hub.
+# bos-launchpad-marketplace.yml in blackoutsecure/bos-automation-hub.
 #
 # All orchestration logic — composing marketplace-action-ci.yml +
 # marketplace-repo-guard.yml + release-promote.yml, event routing,
@@ -79,7 +79,7 @@ permissions:
 
 concurrency:
   group: >-
-    bos-marketplace-launchpad-${{ github.workflow }}-${{ github.event_name }}-${{
+    bos-launchpad-marketplace-${{ github.workflow }}-${{ github.event_name }}-${{
       github.event.pull_request.number
       || inputs.tag_name
       || github.ref
@@ -88,7 +88,7 @@ concurrency:
 
 jobs:
   launchpad:
-    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-marketplace-launchpad.yml@main
+    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-launchpad-marketplace.yml@main
     permissions:
       contents: write
       pull-requests: read
@@ -109,7 +109,7 @@ jobs:
 
       # CodeQL coverage for this kit is driven by the standalone
       # `.github/workflows/codeql.yml` (calls
-      # `blackoutsecure/bos-automation-hub/.github/workflows/repo-security-scan.yml@main`
+      # `blackoutsecure/bos-automation-hub/.github/workflows/bos-launchpad-code-scan.yml@main`
       # directly with `enable_kit_composite: false` \u2014 the producer-kit
       # pattern). We do NOT enable `security_scan` here because that
       # would re-run CodeQL on every dev push, doubling spend with no
