@@ -119,6 +119,7 @@ jobs:
       #
       # `self-scan.yml` separately dogfoods the in-tree `./` composite
       # against this repo's dev source for posture + bundled scanners.
+      enable_security_scan: false
 
       # ----- Community-health files inherited from blackoutsecure/.github
       # CONTRIBUTING.md / SECURITY.md / CODE_OF_CONDUCT.md / SUPPORT.md /

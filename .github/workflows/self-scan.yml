@@ -37,6 +37,16 @@ name: Self-scan · dogfood action against own repo
         type: choice
         default: 'never'
         options: ['never', 'fail']
+      advanced_scanning:
+        description: 'Enable advanced posture probes (PS002/PS003) with SCANNING_PAT.'
+        required: false
+        type: boolean
+        default: false
+      require_pat:
+        description: 'Fail if advanced scanning is requested but SCANNING_PAT is not set.'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -96,6 +106,54 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - id: mode
+        name: Resolve scan mode
+        env:
+          INPUT_ADVANCED: ${{ github.event_name == 'workflow_dispatch' && inputs.advanced_scanning && 'true' || '' }}
+          INPUT_REQUIRE_PAT: ${{ github.event_name == 'workflow_dispatch' && inputs.require_pat && 'true' || '' }}
+          VAR_ADVANCED: ${{ vars['BOS_SCAN_ADVANCED'] }}
+          VAR_REQUIRE_PAT: ${{ vars['BOS_SCAN_REQUIRE_PAT'] }}
+          HAS_PAT: ${{ secrets['SCANNING_PAT'] != '' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+
+          is_true() {
+            case "${1:-}" in
+              true|TRUE|True|1|yes|YES|on|ON) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          advanced_requested=false
+          if [ -n "${INPUT_ADVANCED}" ]; then
+            advanced_requested=true
+          elif is_true "${VAR_ADVANCED}"; then
+            advanced_requested=true
+          fi
+
+          require_pat=false
+          if [ -n "${INPUT_REQUIRE_PAT}" ]; then
+            require_pat=true
+          elif is_true "${VAR_REQUIRE_PAT}"; then
+            require_pat=true
+          fi
+
+          use_pat=false
+          if [ "${advanced_requested}" = "true" ] && [ "${HAS_PAT}" = "true" ]; then
+            use_pat=true
+          fi
+
+          if [ "${advanced_requested}" = "true" ] && [ "${HAS_PAT}" != "true" ] && [ "${require_pat}" = "true" ]; then
+            echo "::error::Advanced scanning was requested, but secret SCANNING_PAT is not configured."
+            exit 1
+          fi
+
+          if [ "${advanced_requested}" = "true" ] && [ "${HAS_PAT}" != "true" ]; then
+            echo "::warning::Advanced scanning requested but SCANNING_PAT is missing. Falling back to GITHUB_TOKEN (PS002/PS003 will be skipped)."
+          fi
+
+          echo "advanced_requested=${advanced_requested}" >> "${GITHUB_OUTPUT}"
+          echo "use_pat=${use_pat}" >> "${GITHUB_OUTPUT}"
       - id: scan
         uses: ./
         with:
@@ -103,7 +161,7 @@ jobs:
           enable_scanners: 'true'
           enable_upload: 'true'
           fail_on: ${{ inputs.fail_on || 'never' }}
-          github_token: ${{ github.token }}
+          github_token: ${{ steps.mode.outputs.use_pat == 'true' && secrets['SCANNING_PAT'] || github.token }}
       - name: Show outputs
         if: always()
         env:
