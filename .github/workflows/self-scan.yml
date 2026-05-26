@@ -1,0 +1,82 @@
+# Self-scan: run THE kit's own composite action against the kit's
+# own repo. This is the canonical dogfood — if the kit can't scan
+# itself cleanly, the kit doesn't ship.
+#
+# Notes on choices:
+#   * `uses: ./` runs the version of `action.yml` on the current
+#     branch (NOT a tagged release). That's exactly what we want: a
+#     PR that breaks the action breaks this workflow.
+#   * `fail_on: never` lets findings surface as a SARIF upload to
+#     Code Scanning without blocking the workflow during the first
+#     few cycles. Flip to `fail` once the baseline is clean.
+#   * The runner matrix covers `ubuntu-latest` (x64) AND
+#     `ubuntu-24.04-arm` so we validate the RUNNER_ARCH branching
+#     baked into the scanner downloads (added in the Phase 4
+#     refactor). Without this, an arm64 regression would only be
+#     caught by a downstream consumer.
+#
+# Lives on `dev` only — never promoted (Marketplace publishing
+# prohibits workflows on the default branch).
+name: Self-scan · dogfood action against own repo
+
+"on":
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      fail_on:
+        description: 'Override fail_on (fail|never).'
+        required: false
+        type: choice
+        default: 'never'
+        options: ['never', 'fail']
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: self-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  self-scan:
+    name: Self-scan (${{ matrix.runs-on }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runs-on: ['ubuntu-latest', 'ubuntu-24.04-arm']
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - id: scan
+        uses: ./
+        with:
+          enable_posture: 'true'
+          enable_scanners: 'true'
+          enable_upload: 'true'
+          fail_on: ${{ inputs.fail_on || 'never' }}
+          github_token: ${{ github.token }}
+      - name: Show outputs
+        if: always()
+        env:
+          SARIF_PATH:       ${{ steps.scan.outputs.sarif_path }}
+          POSTURE_FAILURES: ${{ steps.scan.outputs.posture_failures }}
+        run: |
+          set -euo pipefail
+          echo "sarif_path=${SARIF_PATH}"
+          echo "posture_failures=${POSTURE_FAILURES}"
+      - name: Upload SARIF artifact for inspection
+        if: always() && steps.scan.outputs.sarif_path != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bos-scan-sarif-${{ matrix.runs-on }}
+          path: ${{ steps.scan.outputs.sarif_path }}
+          if-no-files-found: warn
+          retention-days: 14

@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "bos-code-scanning-kit"
 version = "1.0.0"
-description = "Local CLI for the BOS Code Scanning Kit — auto-detect ecosystems, run scanners, audit repo posture, and merge SARIF for GHAS upload."
+description = "Local CLI for the BOS Code Scanning Kit — auto-detect ecosystems, run scanners, audit posture, merge SARIF for GHAS."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
-authors = [{name = "BlackoutSecure"}]
+authors = [{name = "Blackout Secure"}]
 keywords = [
   "github",
   "actions",

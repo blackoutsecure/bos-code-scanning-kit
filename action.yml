@@ -5,10 +5,9 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 name: 'Blackout Secure Code Scanning Kit'
+# MP010: keep <= 125 chars; full feature list lives in README.md.
 description: >-
-  Detect ecosystems, run code & secret scanners, audit repo posture
-  (GHAS toggles, workflow permissions, branch protection, CODEOWNERS),
-  and upload a unified SARIF log to GitHub Advanced Security.
+  Run secret/code scanners and posture audits, then upload a unified SARIF log to GitHub Advanced Security.
 author: 'Blackout Secure'
 
 branding:
@@ -97,8 +96,9 @@ runs:
   using: composite
   steps:
     # ----- 0. Install the kit itself so `bos-scan` is on PATH ---------
+    # SHA pin per Marketplace SC002 hygiene; bump via Dependabot.
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
       with:
         python-version: '3.12'
 
@@ -106,8 +106,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        python -m pip install --quiet --upgrade pip
-        python -m pip install --quiet "${GITHUB_ACTION_PATH}"
+        python3 -m pip install --quiet --upgrade pip
+        python3 -m pip install --quiet "${GITHUB_ACTION_PATH}"
 
     # ----- 1. Ecosystem detection ---------------------------------------
     - id: detect
@@ -149,8 +149,21 @@ runs:
 
         # Record failure count for the workflow output. The CLI's own
         # exit code already encodes this; the count is informational.
+        # JSON-parse the SARIF so whitespace/quote-style in the file
+        # cannot skew the count (the prior `grep -c '"level": "error"'`
+        # was brittle against compact-formatted SARIF).
         if [[ -f "${GITHUB_WORKSPACE}/bos-scan-posture.sarif" ]]; then
-          fails=$(grep -c '"level": "error"' "${GITHUB_WORKSPACE}/bos-scan-posture.sarif" || true)
+          fails=$(python3 - <<'PY' "${GITHUB_WORKSPACE}/bos-scan-posture.sarif"
+        import json, sys
+        try:
+            d = json.load(open(sys.argv[1]))
+        except Exception:
+            print(0); sys.exit(0)
+        print(sum(1 for r in d.get("runs", [])
+                  for x in r.get("results", [])
+                  if x.get("level") == "error"))
+        PY
+        )
         else
           fails=0
         fi
@@ -168,8 +181,18 @@ runs:
       run: |
         set -euo pipefail
         # Install actionlint (single static binary; ~1MB).
+        # Branch on RUNNER_ARCH so this works on both x64 and ARM64
+        # GitHub-hosted runners.
         AL_VERSION=1.7.1
-        AL_TARBALL="actionlint_${AL_VERSION}_linux_amd64.tar.gz"
+        case "${RUNNER_ARCH:-X64}" in
+          X64)   al_arch=amd64 ;;
+          ARM64) al_arch=arm64 ;;
+          *)
+            echo "::warning::unsupported RUNNER_ARCH=${RUNNER_ARCH}; defaulting to amd64"
+            al_arch=amd64
+            ;;
+        esac
+        AL_TARBALL="actionlint_${AL_VERSION}_linux_${al_arch}.tar.gz"
         curl -sSLo /tmp/actionlint.tar.gz \
           "https://github.com/rhysd/actionlint/releases/download/v${AL_VERSION}/${AL_TARBALL}"
         tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
@@ -193,8 +216,16 @@ runs:
       run: |
         set -euo pipefail
         GL_VERSION=8.21.2
+        case "${RUNNER_ARCH:-X64}" in
+          X64)   gl_arch=x64 ;;
+          ARM64) gl_arch=arm64 ;;
+          *)
+            echo "::warning::unsupported RUNNER_ARCH=${RUNNER_ARCH}; defaulting to x64"
+            gl_arch=x64
+            ;;
+        esac
         curl -sSLo /tmp/gitleaks.tar.gz \
-          "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz"
+          "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_${gl_arch}.tar.gz"
         tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
         chmod +x /tmp/gitleaks
         # `detect` over the working tree — no `--no-git` so historical
@@ -217,7 +248,23 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        sudo apt-get install -qq -y shellcheck >/dev/null 2>&1 || true
+        # Pinned static binary — avoids `sudo apt-get` (which fails on
+        # minimal / self-hosted / non-Debian runners) and matches the
+        # pinning strategy used for actionlint and gitleaks above.
+        SC_VERSION=0.10.0
+        case "${RUNNER_ARCH:-X64}" in
+          X64)   sc_arch=x86_64 ;;
+          ARM64) sc_arch=aarch64 ;;
+          *)
+            echo "::warning::unsupported RUNNER_ARCH=${RUNNER_ARCH}; defaulting to x86_64"
+            sc_arch=x86_64
+            ;;
+        esac
+        curl -sSLo /tmp/shellcheck.tar.xz \
+          "https://github.com/koalaman/shellcheck/releases/download/v${SC_VERSION}/shellcheck-v${SC_VERSION}.linux.${sc_arch}.tar.xz"
+        tar -xJf /tmp/shellcheck.tar.xz -C /tmp
+        SHELLCHECK="/tmp/shellcheck-v${SC_VERSION}/shellcheck"
+        chmod +x "${SHELLCHECK}"
         # Collect findings as JSON, then convert to SARIF via a tiny
         # Python helper (keeps us free of extra dependencies).
         cd "${GITHUB_WORKSPACE}"
@@ -226,8 +273,8 @@ runs:
           -not -path './node_modules/*' \
           -not -path './vendor/*' \
           -print0 \
-          | xargs -0 -r shellcheck -f json 2>/dev/null > /tmp/shellcheck.json || true
-        python - <<'PY'
+          | xargs -0 -r "${SHELLCHECK}" -f json 2>/dev/null > /tmp/shellcheck.json || true
+        python3 - <<'PY'
         import json
         import pathlib
         src = pathlib.Path("/tmp/shellcheck.json")
@@ -299,22 +346,60 @@ runs:
         echo "sarif_path=${OUTPUT}" >> "${GITHUB_OUTPUT}"
 
     # ----- 5. Upload to GitHub Advanced Security ------------------------
+    # SHA pin per Marketplace SC002 hygiene; bump via Dependabot.
     - name: Upload SARIF to GitHub Advanced Security
       if: always() && inputs.enable_upload == 'true'
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
       with:
         sarif_file: ${{ steps.merge.outputs.sarif_path }}
         category:   bos-code-scanning-kit
 
-    # ----- 6. Honour the posture exit code (deferred from step 2) -------
-    - name: Enforce posture failure policy
-      if: always() && inputs.enable_posture == 'true' && inputs.fail_on != 'never'
+    # ----- 6. Enforce failure policy (deferred from steps 2 + 3) -------
+    # Honours `fail_on: fail` for BOTH posture findings (step 2 exit code)
+    # AND scanner findings (counted from each scanner's SARIF). Deferring
+    # to the end of the run keeps SARIF upload (step 5) on the happy path
+    # even when the job is destined to fail.
+    - name: Enforce failure policy
+      if: always() && inputs.fail_on != 'never'
       shell: bash
       env:
         EC: ${{ steps.posture.outputs.exit_code }}
+        ENABLE_POSTURE:  ${{ inputs.enable_posture }}
+        ENABLE_SCANNERS: ${{ inputs.enable_scanners }}
       run: |
         set -euo pipefail
-        if [[ "${EC}" != "0" ]]; then
+        cd "${GITHUB_WORKSPACE}"
+        fail=0
+
+        # Posture failures: surface the exit code captured by step 2.
+        if [[ "${ENABLE_POSTURE}" == "true" && "${EC:-0}" != "0" ]]; then
           echo "::error::posture audit reported failures (exit ${EC}). See the SARIF or the step-summary table."
-          exit 1
+          fail=1
         fi
+
+        # Scanner findings: every bundled scanner uses `|| true` /
+        # `--exit-code 0` so its own step is always green. We honour
+        # `fail_on: fail` by counting results across each scanner's
+        # SARIF here.
+        if [[ "${ENABLE_SCANNERS}" == "true" ]]; then
+          for f in bos-scan-actionlint.sarif bos-scan-gitleaks.sarif bos-scan-shellcheck.sarif; do
+            [[ -s "${f}" ]] || continue
+            n=$(python3 - <<'PY' "${f}"
+        import json, sys
+        try:
+            d = json.load(open(sys.argv[1]))
+        except Exception:
+            print(0); sys.exit(0)
+        print(sum(len(r.get("results", [])) for r in d.get("runs", [])))
+        PY
+        )
+            if [[ "${n}" != "0" ]]; then
+              tool="${f#bos-scan-}"
+              tool="${tool%.sarif}"
+              echo "::error::${tool} reported ${n} finding(s). See the SARIF in the Security tab for details."
+              fail=1
+            fi
+          done
+        fi
+
+        exit "${fail}"

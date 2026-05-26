@@ -64,6 +64,11 @@ name: Blackout Secure Marketplace Launchpad
 permissions:
   contents: write
   pull-requests: read
+  # Required by the launchpad's opt-in `codeql` sub-job to upload
+  # SARIF to this repo's Security tab. Harmless when CodeQL is
+  # disabled (the sub-job is `if`-gated off).
+  security-events: write
+  actions: read
 
 concurrency:
   group: >-
@@ -80,6 +85,12 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
+      # Cascade required by the launchpad's `codeql` sub-job (see
+      # `enable_codeql: true` below). The reusable workflow's
+      # effective permissions are min(caller's job, reusable's job),
+      # so omitting these here would silently disable SARIF upload.
+      security-events: write
+      actions: read
     with:
       # ----- Event-routing context (forwarded from caller event) -----
       event_name:      ${{ github.event_name }}
@@ -89,6 +100,15 @@ jobs:
 
       # ----- Per-repo customization (single source of truth) -----
       runtime_artifact_dir: 'src'
+
+      # ----- CodeQL (consolidated via launchpad) -----
+      # Replaces the per-repo `codeql.yml` workflow. Default languages
+      # [python, actions] cover `src/scan_kit/` + composite action.yml
+      # + workflow YAML. Findings land in the Security tab alongside
+      # this repo's other SARIF producers (`self-scan.yml` posture +
+      # scanner output).
+      enable_codeql:    true
+      codeql_languages: '[python, actions]'
 
       # ----- Community-health files inherited from blackoutsecure/.github
       # CONTRIBUTING.md / SECURITY.md / CODE_OF_CONDUCT.md / SUPPORT.md /

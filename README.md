@@ -91,24 +91,32 @@ scanner, audits posture, and uploads a single SARIF.
 
 ## ⚙️ Action inputs
 
-| Input             | Default            | Description                                                                                                  |
-| ----------------- | ------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `owner`           | _workflow context_ | GitHub owner of the repo being scanned.                                                                       |
-| `repo`            | _workflow context_ | GitHub repo name being scanned.                                                                               |
-| `config`          | _auto-discover_    | Path to `.bos-scan.yml`. Defaults to `.bos-scan.yml` / `.bos-scan.yaml` / `bos-scan.yml` at the repo root.    |
-| `github_token`    | `${{ github.token }}` | Token used for posture API calls. Use a PAT for the secret-scanning + Dependabot probes.                  |
-| `enable_posture`  | `true`             | Run the posture audit.                                                                                        |
-| `enable_scanners` | `true`             | Run the bundled scanners (actionlint / gitleaks / shellcheck).                                                |
-| `enable_upload`   | `true`             | Upload the merged SARIF to GitHub Advanced Security.                                                          |
-| `fail_on`         | `fail`             | `fail` → exit non-zero on any posture FAIL. `never` → always exit 0 (useful for first-time rollouts).         |
-| `sarif_output`    | `bos-scan.sarif`   | Path for the merged SARIF artefact.                                                                           |
+<!-- BEGIN action-inputs -->
+| Input | Default | Description |
+| --- | --- | --- |
+| `owner` | _(none)_ | GitHub owner of the repo being scanned. Defaults to the workflow context. |
+| `repo` | _(none)_ | GitHub repo name being scanned. Defaults to the workflow context. |
+| `config` | _(none)_ | Path to `.bos-scan.yml`. Defaults to auto-discovery at the repo root. |
+| `github_token` | `${{ github.token }}` | Token used by the posture audit. `${{ secrets.GITHUB_TOKEN }}` is enough for code-scanning probes; secret-scanning + Dependabot probes require a PAT with `repo` + admin scope. |
+| `enable_posture` | `true` | `true` to run the posture audit step. |
+| `enable_scanners` | `true` | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck). |
+| `enable_upload` | `true` | `true` to upload the merged SARIF to GitHub Advanced Security. |
+| `fail_on` | `fail` | `fail` (default) — exit non-zero if posture has any FAIL findings or any scanner reports a result. `never` — collect findings but always exit 0 (useful for first-time rollouts). |
+| `sarif_output` | `bos-scan.sarif` | Path for the merged SARIF artefact. |
+<!-- END action-inputs -->
+
+> The table above is auto-generated from `action.yml` by
+> [`scripts/render_readme_inputs.py`](scripts/render_readme_inputs.py).
+> Edit `action.yml` and run `python3 scripts/render_readme_inputs.py --write`.
 
 ## 📤 Action outputs
 
-| Output             | Description                                              |
-| ------------------ | -------------------------------------------------------- |
-| `sarif_path`       | Path to the merged SARIF file produced by the run.       |
-| `posture_failures` | Number of FAIL findings emitted by the posture audit.    |
+<!-- BEGIN action-outputs -->
+| Output | Description |
+| --- | --- |
+| `sarif_path` | Path to the merged SARIF file produced by the run. |
+| `posture_failures` | Number of FAIL findings from the posture audit. |
+<!-- END action-outputs -->
 
 ## 🛡️ Posture rule reference
 
