@@ -49,9 +49,11 @@ inputs:
   # ----- Authentication -----
   github_token:
     description: >-
-      Token used by the posture audit. `${{ secrets.GITHUB_TOKEN }}` is
-      enough for code-scanning probes; secret-scanning + Dependabot
-      probes require a PAT with `repo` + admin scope.
+      Token used by the posture audit. The workflow's default
+      `GITHUB_TOKEN` (passed as `secrets.GITHUB_TOKEN` from the
+      caller, or left unset to inherit `github.token`) is enough for
+      code-scanning probes; secret-scanning + Dependabot probes
+      require a PAT with `repo` + admin scope.
     required: false
     default: ${{ github.token }}
 

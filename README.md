@@ -113,7 +113,7 @@ the `commit` field of the GitHub Release JSON.
 | `owner` | _(none)_ | GitHub owner of the repo being scanned. Defaults to the workflow context. |
 | `repo` | _(none)_ | GitHub repo name being scanned. Defaults to the workflow context. |
 | `config` | _(none)_ | Path to `.bos-scan.yml`. Defaults to auto-discovery at the repo root. |
-| `github_token` | `${{ github.token }}` | Token used by the posture audit. `${{ secrets.GITHUB_TOKEN }}` is enough for code-scanning probes; secret-scanning + Dependabot probes require a PAT with `repo` + admin scope. |
+| `github_token` | `${{ github.token }}` | Token used by the posture audit. The workflow's default `GITHUB_TOKEN` (passed as `secrets.GITHUB_TOKEN` from the caller, or left unset to inherit `github.token`) is enough for code-scanning probes; secret-scanning + Dependabot probes require a PAT with `repo` + admin scope. |
 | `enable_posture` | `true` | `true` to run the posture audit step. |
 | `enable_scanners` | `true` | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck). |
 | `enable_upload` | `true` | `true` to upload the merged SARIF to GitHub Advanced Security. |
