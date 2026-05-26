@@ -57,7 +57,7 @@ required reviews, and CODEOWNERS for every branch you care about.
 - For the **SARIF upload**: `security-events: write` in your workflow
   `permissions:` block.
 
-## 🚀 Quick start
+## Quick start 🚀
 
 ```yaml
 name: Code scanning

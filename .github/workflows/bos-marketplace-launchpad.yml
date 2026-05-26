@@ -64,11 +64,6 @@ name: Blackout Secure Marketplace Launchpad
 permissions:
   contents: write
   pull-requests: read
-  # Required by the launchpad's opt-in `codeql` sub-job to upload
-  # SARIF to this repo's Security tab. Harmless when CodeQL is
-  # disabled (the sub-job is `if`-gated off).
-  security-events: write
-  actions: read
 
 concurrency:
   group: >-
@@ -85,13 +80,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
-      # Cascade required by the launchpad's `security_scan` sub-job
-      # (see `enable_security_scan: true` below). The reusable
-      # workflow's effective permissions are min(caller's job,
-      # reusable's job), so omitting these here would silently disable
-      # SARIF upload.
-      security-events: write
-      actions: read
     with:
       # ----- Event-routing context (forwarded from caller event) -----
       event_name:      ${{ github.event_name }}
@@ -102,25 +90,18 @@ jobs:
       # ----- Per-repo customization (single source of truth) -----
       runtime_artifact_dir: 'src'
 
-      # ----- Security scan stage — CodeQL only (producer-kit pattern) -----
-      # Producer-kit escape hatch: this repo PUBLISHES
-      # `blackoutsecure/bos-code-scanning-kit@v1`, so we must NOT run
-      # the published @v1 composite against our own dev source
-      # (`self-scan.yml` already dogfoods the in-tree `./` composite
-      # against dev code). We DO want CodeQL coverage via the
-      # launchpad, so:
-      #   * enable_security_scan:               true   — turn on the stage
-      #   * security_scan_enable_kit_composite: false  — skip the
-      #                                                   composite sub-job
-      #   * security_scan_codeql_languages:     [python, actions]
-      #                                                   — run CodeQL
-      # Default languages cover `src/scan_kit/` + composite action.yml
-      # + workflow YAML. Findings land in the Security tab alongside
-      # this repo's other SARIF producers (`self-scan.yml` posture +
-      # scanner output).
-      enable_security_scan:               true
-      security_scan_enable_kit_composite: false
-      security_scan_codeql_languages:     '[python, actions]'
+      # CodeQL coverage for this kit is driven by the standalone
+      # `.github/workflows/codeql.yml` (calls
+      # `blackoutsecure/bos-automation-hub/.github/workflows/repo-security-scan.yml@main`
+      # directly with `enable_kit_composite: false` \u2014 the producer-kit
+      # pattern). We do NOT enable `security_scan` here because that
+      # would re-run CodeQL on every dev push, doubling spend with no
+      # extra signal, and would defeat the `CQ001` marketplace-kit
+      # detector (which only recognises a top-level workflow file
+      # referencing `github/codeql-action`, not transitive reusables).
+      #
+      # `self-scan.yml` separately dogfoods the in-tree `./` composite
+      # against this repo's dev source for posture + bundled scanners.
 
       # ----- Community-health files inherited from blackoutsecure/.github
       # CONTRIBUTING.md / SECURITY.md / CODE_OF_CONDUCT.md / SUPPORT.md /

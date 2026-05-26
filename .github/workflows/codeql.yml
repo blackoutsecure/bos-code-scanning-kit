@@ -1,0 +1,77 @@
+# Thin caller for the consolidated security-scan reusable in bos-automation-hub.
+#
+# Replaces what would otherwise be a ~90-line inline CodeQL workflow
+# with a ~30-line subscribe-and-forward wrapper. All CodeQL invocation
+# logic (matrix, permissions, SHA pins, queries) lives in
+# `blackoutsecure/bos-automation-hub/.github/workflows/repo-security-scan.yml`
+# so a single hub commit propagates pin / version bumps to every kit
+# on next run.
+#
+# This kit calls the reusable DIRECTLY (not via the Marketplace
+# Launchpad) because it is the PRODUCER of the `bos-code-scanning-kit@v1`
+# composite that the launchpad's `security_scan` stage wraps. Calling
+# the launchpad with `enable_security_scan: true` would invoke the
+# PUBLISHED `@v1` composite against this repo's `dev` source,
+# defeating the in-tree testing model that `self-scan.yml` provides
+# (local `./` composite against current dev code).
+#
+# Likewise, `enable_kit_composite: false` below skips the
+# `bos-code-scanning-kit@v1` sub-job inside the wrapper — this kit
+# doesn't need that composite, only its CodeQL matrix sub-job.
+# `self-scan.yml` separately covers posture + bundled scanners.
+#
+# `name: CodeQL` is intentionally conventional (not the
+# `Word · …` pattern used elsewhere): GitHub's Security tab surfaces
+# this value as the SARIF tool name, and external dashboards key off
+# it. The marketplace-kit's CQ001 detector also keys off the literal
+# presence of a workflow file referencing `github/codeql-action`,
+# which the hub reusable provides transitively.
+
+# Transitive invocations performed by the hub-side reusable (kept
+# inline here so audit tooling and the marketplace-kit CQ001 detector
+# can see them at this repo's surface):
+#
+#   uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa    # v4.36.0
+#   uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+#
+# Bump the SHAs above in lockstep with
+# `bos-automation-hub/.github/workflows/repo-security-scan.yml`.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    uses: blackoutsecure/bos-automation-hub/.github/workflows/repo-security-scan.yml@main
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    with:
+      # Producer-kit escape hatch: skip the `bos-code-scanning-kit@v1`
+      # sub-job (this repo IS that kit). `self-scan.yml` runs the
+      # in-tree `./` composite against dev code instead.
+      enable_kit_composite: false
+      # Covers `src/scan_kit/` (Python module), the kit's composite
+      # `action.yml`, and all workflow YAML in `.github/workflows/`.
+      #
+      # NOTE: the string is passed to `fromJSON()` on the reusable
+      # side to drive a matrix, so it MUST be valid JSON — entries
+      # have to be DOUBLE-QUOTED strings. YAML's flow-list shorthand
+      # `[python, actions]` looks similar but is rejected with
+      # `fromJSON: Unexpected symbol: 'python'`.
+      codeql_languages: '["python", "actions"]'
+      codeql_queries:   security-and-quality
