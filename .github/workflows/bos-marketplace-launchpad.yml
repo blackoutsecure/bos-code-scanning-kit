@@ -47,7 +47,7 @@ name: Blackout Secure Marketplace Launchpad
           - name-check
         default: release
       tag_name:
-        description: 'Release tag (SemVer, e.g. v1.2.0). Required when `mode: release`.'
+        description: 'Release tag (SemVer, e.g. v1.2.0). Leave empty to auto-bump the patch of the latest stable tag (or `v0.1.0` for a first release). Pass an explicit tag for minor/major bumps or pre-release suffixes.'
         required: false
         type: string
       dry_run:
