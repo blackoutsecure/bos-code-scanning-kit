@@ -132,6 +132,26 @@ def test_posture_run_records_file_locations():
     assert locs[0]["physicalLocation"]["artifactLocation"]["uri"] == ".github/workflows/ci.yml"
 
 
+def test_posture_run_synthesises_repo_location_when_finding_has_none():
+    # Regression: PS001/PS002/PS003 emit Finding(..., "error", str(exc))
+    # with NO `location=` when the default GITHUB_TOKEN lacks the scope
+    # to query GHAS settings. SARIF results with `locations: []` are
+    # rejected by GHAS with `locationFromSarifResult: expected at least
+    # one location`. Every result MUST have >= 1 location entry.
+    findings = [
+        Finding("PS001", "error", "API 403 querying code-scanning settings"),
+        Finding("PS002", "error", "API 403 querying secret-scanning settings"),
+        Finding("PS003", "error", "API 403 querying Dependabot settings"),
+    ]
+    run = sarif_mod.posture_run(findings)
+    assert len(run["results"]) == 3
+    for r in run["results"]:
+        locs = r["locations"]
+        assert len(locs) >= 1, f"result {r['ruleId']} must have >=1 location"
+        # Synthetic repo-wide logicalLocation
+        assert locs[0]["logicalLocations"][0]["name"] == "repository"
+
+
 def test_posture_run_rules_index_unique():
     findings = [Finding("PS001", "fail", f"x{n}") for n in range(3)]
     run = sarif_mod.posture_run(findings)

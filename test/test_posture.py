@@ -195,7 +195,11 @@ def test_ps001_warns_when_not_configured():
     assert sev["PS003"] == "warn"
 
 
-def test_ps002_error_on_403():
+def test_ps002_skip_on_403():
+    # The default GITHUB_TOKEN lacks `admin:org` / repo admin scope to
+    # reach this endpoint; surface as `skip` ("we did not check") rather
+    # than `error` ("something broke"). Keeps the step summary honest
+    # and the SARIF upload clean (skip/pass are dropped from SARIF).
     fake = FakeGitHub({
         "/repos/o/r/secret-scanning/alerts?per_page=1": (None, 403),
     })
@@ -205,7 +209,10 @@ def test_ps002_error_on_403():
         require_dependabot_alerts="skip",
     )
     out = posture_mod._audit_ghas(fake, "o", "r", cfg)
-    assert any(f.rule_id == "PS002" and f.severity == "error" for f in out)
+    assert any(
+        f.rule_id == "PS002" and f.severity == "skip" and "forbidden" in f.message
+        for f in out
+    )
 
 
 def test_skip_severities_skip_api_calls():

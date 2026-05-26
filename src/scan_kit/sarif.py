@@ -122,11 +122,15 @@ def posture_run(findings: list[Finding]) -> dict[str, Any]:
         # Drop pass/skip from the upload — keeps the Security tab signal-rich.
         if f.severity in ("pass", "skip"):
             continue
+        # GHAS rejects results with `locations: []` ("expected at least one
+        # location"), so `_location_for` ALWAYS returns a non-empty block —
+        # repo-wide findings (PS001/PS002/PS003 API-permission errors etc.)
+        # synthesize a `logicalLocation` rather than yielding an empty array.
         sarif_results.append({
             "ruleId": f.rule_id,
             "level": _SARIF_LEVEL.get(f.severity, "warning"),
             "message": {"text": f.message},
-            "locations": [_location_for(f)] if f.location else [],
+            "locations": [_location_for(f)],
         })
 
     rules = [
@@ -153,17 +157,34 @@ def posture_run(findings: list[Finding]) -> dict[str, Any]:
 
 
 def _location_for(f: Finding) -> dict[str, Any]:
-    """Turn a `Finding.location` into a SARIF physicalLocation block."""
+    """Turn a `Finding.location` into a SARIF location block.
+
+    Always returns a non-empty block — GHAS Code Scanning rejects a SARIF
+    upload if any `result` has `locations: []` with the diagnostic
+    `locationFromSarifResult: expected at least one location`. Findings
+    without a specific location (e.g. PS001/PS002/PS003 repo-wide GHAS
+    settings probes that fail when the default `GITHUB_TOKEN` lacks
+    `security_events` scope) synthesize a `logicalLocation` pointing at
+    the repository as a whole.
+    """
+    loc = f.location
+    # Repo-wide finding (no specific file or branch) → synthetic
+    # logicalLocation so the upload is accepted. GHAS shows it under the
+    # repo in the Security tab without a file link, which is accurate.
+    if not loc:
+        return {
+            "logicalLocations": [{"name": "repository", "kind": "module"}],
+        }
     # Branch references are virtual — keep them as logicalLocations so
     # GHAS doesn't try to map them to a source line.
-    if f.location.startswith("branch:"):
+    if loc.startswith("branch:"):
         return {
-            "logicalLocations": [{"name": f.location, "kind": "object"}],
+            "logicalLocations": [{"name": loc, "kind": "object"}],
         }
     # Everything else is a file path.
     return {
         "physicalLocation": {
-            "artifactLocation": {"uri": f.location},
+            "artifactLocation": {"uri": loc},
         },
     }
 

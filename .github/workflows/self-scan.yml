@@ -9,11 +9,16 @@
 #   * `fail_on: never` lets findings surface as a SARIF upload to
 #     Code Scanning without blocking the workflow during the first
 #     few cycles. Flip to `fail` once the baseline is clean.
-#   * The runner matrix covers `ubuntu-latest` (x64) AND
-#     `ubuntu-24.04-arm` so we validate the RUNNER_ARCH branching
-#     baked into the scanner downloads (added in the Phase 4
-#     refactor). Without this, an arm64 regression would only be
-#     caught by a downstream consumer.
+#   * The matrix covers BOTH `vars.RUNNER_X64` and `vars.RUNNER_ARM64`
+#     so we validate the RUNNER_ARCH branching baked into the scanner
+#     downloads (added in the Phase 4 refactor). Without two arches,
+#     an arm64 regression would only be caught by a downstream
+#     consumer. Each leg uses the org's preferred per-arch runner —
+#     bare GitHub-hosted labels (`ubuntu-latest`, `ubuntu-24.04-arm`)
+#     or JSON-array self-hosted labels both work, normalised by the
+#     same resolver expression used everywhere else (see hub README,
+#     "Runner resolution"). Both vars are validated by
+#     `preflight-runner-config` before the matrix is consumed.
 #
 # Lives on `dev` only — never promoted (Marketplace publishing
 # prohibits workflows on the default branch).
@@ -43,14 +48,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Preflight — validate `vars.RUNNER_X64` AND `vars.RUNNER_ARM64` once
+  # before the matrix is expanded. Fails fast with a clear annotation
+  # when either is missing or malformed, instead of leaving jobs queued
+  # indefinitely against an unmatched label. Runs on `ubuntu-latest`
+  # because the validator must run on a runner that is always present.
+  # `vars.DEFAULT_RUNNER` is NOT required here — this workflow is
+  # arch-pinned by design (cross-arch regression coverage).
+  # See `blackoutsecure/bos-automation-hub` README ("Runner resolution")
+  # for the org-wide convention this mirrors.
+  # ---------------------------------------------------------------------------
+  preflight-runner-config:
+    name: Preflight (runner config)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: blackoutsecure/bos-automation-hub/.github/actions/shared/preflight-runner-config@main
+        with:
+          runner_x64:             ${{ vars.RUNNER_X64 }}
+          runner_arm64:           ${{ vars.RUNNER_ARM64 }}
+          require_default_runner: 'false'
+          require_runner_x64:     'true'
+          require_runner_arm64:   'true'
+
   self-scan:
-    name: Self-scan (${{ matrix.runs-on }})
-    runs-on: ${{ matrix.runs-on }}
+    name: Self-scan (${{ matrix.arch }})
+    needs: preflight-runner-config
+    # Resolves the matrix-supplied runner var (bare label or JSON-array
+    # string). Both presence and shape are enforced by
+    # `preflight-runner-config`, so this expression has no fallback —
+    # see the hub's README ("Runner resolution") for the full rationale.
+    runs-on: ${{ fromJSON(startsWith(matrix.runner, '[') && matrix.runner || format('"{0}"', matrix.runner)) }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        runs-on: ['ubuntu-latest', 'ubuntu-24.04-arm']
+        # `${{ vars.* }}` is substituted at workflow-start (before matrix
+        # expansion), so each leg carries a concrete runner spec string
+        # by the time the resolver above evaluates it.
+        include:
+          - arch: x64
+            runner: ${{ vars.RUNNER_X64 }}
+          - arch: arm64
+            runner: ${{ vars.RUNNER_ARM64 }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -76,7 +117,7 @@ jobs:
         if: always() && steps.scan.outputs.sarif_path != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: bos-scan-sarif-${{ matrix.runs-on }}
+          name: bos-scan-sarif-${{ matrix.arch }}
           path: ${{ steps.scan.outputs.sarif_path }}
           if-no-files-found: warn
           retention-days: 14
