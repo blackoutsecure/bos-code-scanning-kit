@@ -38,12 +38,12 @@ name: Self-scan · dogfood action against own repo
         default: 'never'
         options: ['never', 'fail']
       advanced_scanning:
-        description: 'Enable advanced posture probes (PS002/PS003) with SCANNING_PAT.'
+        description: 'Force advanced posture probes (PS001/PS002/PS003) on or off. Leave unchecked to use the default: auto-enabled on every event when secret `SCANNING_PAT` is present, otherwise off. Check to force-enable (errors out with `require_pat` if secret is missing).'
         required: false
         type: boolean
         default: false
       require_pat:
-        description: 'Fail if advanced scanning is requested but SCANNING_PAT is not set.'
+        description: 'Fail if advanced scanning is requested but SCANNING_PAT is not set. Useful for verifying the PAT secret is actually present (instead of silently falling back to GITHUB_TOKEN).'
         required: false
         type: boolean
         default: false
@@ -124,10 +124,21 @@ jobs:
             esac
           }
 
+          # Dogfood auto-enable: when SCANNING_PAT is present at the
+          # repo/org level, the kit's own self-scan ALWAYS exercises
+          # the advanced posture path (PS001 code-scanning default-
+          # setup, PS002 secret-scanning enablement, PS003 Dependabot
+          # alerts enablement). This is the canonical end-to-end test
+          # for the SCANNING_PAT wiring — if the kit can't probe its
+          # own GHAS settings cleanly, consumers won't either. Explicit
+          # dispatch input / repo var still override (e.g. to force a
+          # fallback-path test by passing `advanced_scanning: false`).
           advanced_requested=false
           if [ -n "${INPUT_ADVANCED}" ]; then
             advanced_requested=true
           elif is_true "${VAR_ADVANCED}"; then
+            advanced_requested=true
+          elif [ "${HAS_PAT}" = "true" ]; then
             advanced_requested=true
           fi
 

@@ -133,3 +133,19 @@ jobs:
       tag_name:      ${{ inputs.tag_name || '' }}
       dry_run:       ${{ inputs.dry_run || false }}
       release_draft: ${{ inputs.draft || false }}
+
+      # ----- Release-time hard gate (non-dry-run release dispatches only) -----
+      # Block the dev → main promote + GH Release if any of the three
+      # PR-time gates is not green at `dev` HEAD. The launchpad's own
+      # `ci` / `security_scan` jobs are skipped on release dispatch (they
+      # gate PRs into `dev`, not the dispatch itself), so this preflight
+      # is what actually prevents a maintainer from accidentally
+      # releasing red code. Dry-runs always bypass this gate so the
+      # release pipeline can be previewed against a red branch.
+      #
+      # Workflows listed here MUST be triggered on `push: dev` so a
+      # completed run exists at every commit on `dev`. All three already
+      # are — see each file's `on:` block. The gate looks up runs by
+      # `head_sha` (exact SHA match), so a release dispatched while CI
+      # is still in-progress on the latest dev commit correctly fails.
+      require_workflow_success: 'tests.yml,self-scan.yml,codeql.yml'
