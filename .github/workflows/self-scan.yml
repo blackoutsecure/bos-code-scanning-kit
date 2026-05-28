@@ -76,6 +76,13 @@ jobs:
     steps:
       - uses: blackoutsecure/bos-automation-hub/.github/actions/shared/preflight-runner-config@main
         with:
+          # Forward all three vars even though this workflow is arch-pinned
+          # and never consumes DEFAULT_RUNNER. Composite actions cannot read
+          # `vars.*` directly, so omitting it would print a misleading
+          # "empty (not required)" line in the preflight log when the org
+          # actually has DEFAULT_RUNNER set. See the action's own docs
+          # ("Convention: callers should forward all three runner vars").
+          default_runner:         ${{ vars.DEFAULT_RUNNER }}
           runner_x64:             ${{ vars.RUNNER_X64 }}
           runner_arm64:           ${{ vars.RUNNER_ARM64 }}
           require_default_runner: 'false'
