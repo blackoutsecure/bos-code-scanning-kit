@@ -134,6 +134,20 @@ jobs:
       dry_run:       ${{ inputs.dry_run || false }}
       release_draft: ${{ inputs.draft || false }}
 
+      # ----- AI-generated changelog in the GitHub Release body -----------
+      # Opt-in for this kit specifically (rest of the BlackoutSecure
+      # marketplace fleet stays on the bash conventional-commits
+      # grouper until each maintainer flips it on).
+      #
+      # The hub launchpad → release-promote → github-release →
+      # render-release-notes chain summarizes commits between the
+      # previous tag and `dev` HEAD via the GitHub Models inference
+      # API (`openai/gpt-4o-mini` is the default; cheap, fast, very
+      # good at conventional-commit grouping). Falls back to a
+      # deterministic bash grouping on any AI failure — releases
+      # never block on AI availability.
+      release_ai_changelog: 'true'
+
       # ----- Release-time hard gate (non-dry-run release dispatches only) -----
       # Block the dev → main promote + GH Release if any of the three
       # PR-time gates is not green at `dev` HEAD. The launchpad's own
