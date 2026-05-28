@@ -44,7 +44,16 @@ def empty_log() -> dict[str, Any]:
 
 
 def merge(*logs: dict[str, Any]) -> dict[str, Any]:
-    """Merge an arbitrary number of SARIF log dicts into one."""
+    """Merge an arbitrary number of SARIF log dicts into one.
+
+    Every appended run is passed through `sanitize_run` so that
+    upstream-tool results lacking a usable `physicalLocation` are
+    repaired in-place before they reach GHAS. See `sanitize_run` for
+    the rules; the practical motivation is gitleaks (and other
+    scanners) occasionally emitting results with empty or missing
+    `artifactLocation.uri`, which GHAS rejects with
+    `locationFromSarifResult: expected a physical location`.
+    """
     merged = empty_log()
     for log in logs:
         if not isinstance(log, dict):
@@ -54,6 +63,7 @@ def merge(*logs: dict[str, Any]) -> dict[str, Any]:
             continue
         for run in runs:
             if isinstance(run, dict):
+                sanitize_run(run)
                 merged["runs"].append(run)
     return merged
 
@@ -92,6 +102,99 @@ def dump(log: dict[str, Any], path: Path) -> None:
         json.dumps(log, indent=2, sort_keys=False) + "\n",
         encoding="utf-8",
     )
+
+
+# ---------------------------------------------------------------------------
+# Result-location sanitization
+# ---------------------------------------------------------------------------
+
+# Sentinel used when a result has no usable physicalLocation. GHAS rejects
+# any result whose `locations[]` lacks a `physicalLocation` (or whose
+# `physicalLocation.artifactLocation.uri` is missing/empty) with the error
+# `locationFromSarifResult: expected a physical location`. `.github/` is
+# the conventional directory for repo-wide security config and is where
+# the posture audit also points its repo-wide findings — keeping a single
+# sentinel target makes the Security tab consistent across rule sources.
+_SENTINEL_URI = ".github/"
+
+
+def _sentinel_physical_location() -> dict[str, Any]:
+    return {"artifactLocation": {"uri": _SENTINEL_URI}}
+
+
+def _sentinel_location() -> dict[str, Any]:
+    return {
+        "physicalLocation": _sentinel_physical_location(),
+        "logicalLocations": [{"name": "repository", "kind": "module"}],
+    }
+
+
+def _is_usable_physical_location(pl: Any) -> bool:
+    """A physicalLocation is usable iff it carries a non-empty URI.
+
+    GHAS's SARIF processor walks each result's `locations[]` and calls
+    `locationFromSarifResult` on each entry; the entry must resolve to
+    a physical artifact. Empty / missing `artifactLocation.uri` (gitleaks
+    has historically produced this for a handful of detector rules) is
+    indistinguishable from a logical-only location and triggers the
+    rejection we are guarding against.
+    """
+    if not isinstance(pl, dict):
+        return False
+    al = pl.get("artifactLocation")
+    if not isinstance(al, dict):
+        return False
+    uri = al.get("uri")
+    return isinstance(uri, str) and bool(uri.strip())
+
+
+def sanitize_result(result: dict[str, Any]) -> None:
+    """In-place: ensure `result["locations"]` is GHAS-uploadable.
+
+    Idempotent. Preserves valid `physicalLocation` blocks (including
+    region/snippet/contextRegion data emitted by gitleaks et al.) and
+    only rewrites entries that would be rejected by the Code Scanning
+    upload validator. Entries with a usable `physicalLocation` are left
+    untouched; entries missing one get a sentinel
+    `physicalLocation.artifactLocation.uri = ".github/"` grafted in
+    alongside any pre-existing `logicalLocations` for UI labels.
+    """
+    if not isinstance(result, dict):
+        return
+    locs = result.get("locations")
+    if not isinstance(locs, list) or not locs:
+        result["locations"] = [_sentinel_location()]
+        return
+
+    sanitized: list[dict[str, Any]] = []
+    for loc in locs:
+        if not isinstance(loc, dict):
+            # Drop non-object entries — they would fail validation anyway.
+            continue
+        pl = loc.get("physicalLocation")
+        if _is_usable_physical_location(pl):
+            sanitized.append(loc)
+            continue
+        # Repair: graft a sentinel physicalLocation while keeping any
+        # logicalLocations / annotations the upstream tool attached.
+        repaired = dict(loc)
+        repaired["physicalLocation"] = _sentinel_physical_location()
+        sanitized.append(repaired)
+
+    if not sanitized:
+        sanitized = [_sentinel_location()]
+    result["locations"] = sanitized
+
+
+def sanitize_run(run: dict[str, Any]) -> None:
+    """In-place sanitize every `results[]` entry in a single SARIF run."""
+    if not isinstance(run, dict):
+        return
+    results = run.get("results")
+    if not isinstance(results, list):
+        return
+    for r in results:
+        sanitize_result(r)
 
 
 # ---------------------------------------------------------------------------
