@@ -61,6 +61,13 @@ class GHASPosture:
     require_code_scanning: str = "warn"          # severity
     require_secret_scanning: str = "warn"
     require_dependabot_alerts: str = "warn"
+    # PS004 — secret-scanning push protection. Independent from
+    # `require_secret_scanning` (PS002): base scanning catches secrets
+    # already in history, push protection refuses the push before the
+    # secret lands. Probed via `security_and_analysis` on the repo
+    # object, which is admin-only — non-admin tokens silently get the
+    # field stripped and the rule degrades to `skip` (see posture.py).
+    require_push_protection: str = "warn"
 
 
 @dataclass(frozen=True)
@@ -221,6 +228,7 @@ def _posture_from_dict(d: dict[str, Any]) -> PostureConfig:
         require_code_scanning=_severity(ghas_d, "require_code_scanning", "warn"),
         require_secret_scanning=_severity(ghas_d, "require_secret_scanning", "warn"),
         require_dependabot_alerts=_severity(ghas_d, "require_dependabot_alerts", "warn"),
+        require_push_protection=_severity(ghas_d, "require_push_protection", "warn"),
     )
 
     wf_d = _dict(d, "workflows")

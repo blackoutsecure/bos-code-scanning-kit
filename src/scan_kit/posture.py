@@ -292,7 +292,16 @@ def audit(
 def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Finding]:
     out: list[Finding] = []
 
-    # PS001 — code scanning default setup
+    # PS001 — code scanning enabled (Default OR Advanced setup).
+    #
+    # GitHub exposes two mutually-exclusive UX paths to enable CodeQL on a
+    # repo: "Default setup" (managed, default-setup endpoint reports
+    # state=configured) and "Advanced" (caller-owned workflow that uploads
+    # SARIF via `github/codeql-action/analyze`). The default-setup endpoint
+    # ONLY reports on the former — a repo running CodeQL via Advanced gets
+    # state=not-configured even though scanning is active. Without the
+    # fallback below this rule fires a false-negative warn for every
+    # caller using Advanced (incl. this kit itself).
     if cfg.require_code_scanning != "skip":
         body, status = gh.get_or_none(f"/repos/{owner}/{repo}/code-scanning/default-setup")
         if status == 200 and isinstance(body, dict) and body.get("state") == "configured":
@@ -307,10 +316,27 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
             out.append(Finding("PS001", "skip",
                                "code scanning probe forbidden — token needs `repo` (provide a PAT to check)"))
         else:
-            out.append(Finding(
-                "PS001", cfg.require_code_scanning,
-                "GHAS code scanning is not enabled (Settings → Code security → Set up)",
-            ))
+            # Default-setup is off — fall back to checking whether an
+            # Advanced workflow has uploaded any CodeQL analyses for the
+            # repo. A single 200 with non-empty array means CodeQL is
+            # actively scanning via Advanced and the row should `pass`.
+            # The analyses endpoint needs `security_events: read`, which
+            # the default `GITHUB_TOKEN` does grant — no scope escalation
+            # over the default-setup probe.
+            adv_body, adv_status = gh.get_or_none(
+                f"/repos/{owner}/{repo}/code-scanning/analyses?tool_name=CodeQL&per_page=1",
+            )
+            if adv_status == 200 and isinstance(adv_body, list) and len(adv_body) > 0:
+                out.append(Finding(
+                    "PS001", "pass",
+                    "GHAS code scanning via Advanced setup (CodeQL workflow uploading analyses)",
+                ))
+            else:
+                out.append(Finding(
+                    "PS001", cfg.require_code_scanning,
+                    "GHAS code scanning is not enabled — Settings → Code security → Code scanning → Set up (Default), "
+                    "OR commit a workflow that calls `github/codeql-action/analyze` (Advanced)",
+                ))
 
     # PS002 — secret scanning enabled (probe by listing alerts; 404 = disabled)
     if cfg.require_secret_scanning != "skip":
@@ -318,8 +344,10 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
         if status == 200:
             out.append(Finding("PS002", "pass", "GHAS secret scanning is enabled"))
         elif status == 404:
-            out.append(Finding("PS002", cfg.require_secret_scanning,
-                               "GHAS secret scanning is not enabled"))
+            out.append(Finding(
+                "PS002", cfg.require_secret_scanning,
+                "GHAS secret scanning is not enabled — Settings → Code security → Secret scanning → Enable",
+            ))
         elif status == 403:
             # Token-scope limitation — see PS001 comment above.
             out.append(Finding("PS002", "skip",
@@ -337,8 +365,10 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
         if status == 204 or status == 200:
             out.append(Finding("PS003", "pass", "Dependabot vulnerability alerts are enabled"))
         elif status == 404:
-            out.append(Finding("PS003", cfg.require_dependabot_alerts,
-                               "Dependabot vulnerability alerts are not enabled"))
+            out.append(Finding(
+                "PS003", cfg.require_dependabot_alerts,
+                "Dependabot vulnerability alerts are not enabled — Settings → Code security → Dependabot alerts → Enable",
+            ))
         elif status == 403:
             # Token-scope limitation — see PS001 comment above.
             out.append(Finding("PS003", "skip",
@@ -346,6 +376,46 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
         else:
             out.append(Finding("PS003", "error",
                                f"Dependabot probe returned unexpected status {status}"))
+
+    # PS004 — secret-scanning push protection enabled. Independent from PS002:
+    # base scanning catches secrets already in history; push protection refuses
+    # the push before the secret lands. They toggle separately in the UI and
+    # warrant separate audit rows. Probed via `security_and_analysis` on the
+    # repo object — that field is admin-only, so non-admin tokens get a 200
+    # with the field stripped silently. Treat the missing-field case as `skip`
+    # (we couldn't see it) rather than `warn` (it's off).
+    if cfg.require_push_protection != "skip":
+        body, status = gh.get_or_none(f"/repos/{owner}/{repo}")
+        if status == 200 and isinstance(body, dict):
+            sa = body.get("security_and_analysis")
+            if not isinstance(sa, dict) or "secret_scanning_push_protection" not in sa:
+                out.append(Finding(
+                    "PS004", "skip",
+                    "push-protection probe needs repo admin — `security_and_analysis` not visible to this token",
+                ))
+            else:
+                pp_status = (sa.get("secret_scanning_push_protection") or {}).get("status")
+                if pp_status == "enabled":
+                    out.append(Finding(
+                        "PS004", "pass",
+                        "secret-scanning push protection is enabled",
+                    ))
+                else:
+                    out.append(Finding(
+                        "PS004", cfg.require_push_protection,
+                        "secret-scanning push protection is not enabled — "
+                        "Settings → Code security → Secret scanning → Push protection → Enable",
+                    ))
+        elif status == 403:
+            out.append(Finding(
+                "PS004", "skip",
+                "push-protection probe forbidden — token needs `repo` (admin) (provide a PAT to check)",
+            ))
+        else:
+            out.append(Finding(
+                "PS004", "error",
+                f"push-protection probe returned unexpected status {status}",
+            ))
 
     return out
 

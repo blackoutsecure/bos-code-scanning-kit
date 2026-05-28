@@ -179,9 +179,10 @@ for the consumer-side wiring.
 
 | Rule | Endpoint | Fine-grained permission | Classic scope |
 |------|----------|-------------------------|---------------|
-| `PS001` | `GET /repos/{}/code-scanning/default-setup` | Code scanning alerts: Read | `security_events` or `repo` |
+| `PS001` | `GET /repos/{}/code-scanning/default-setup`, fallback `GET /repos/{}/code-scanning/analyses?tool_name=CodeQL` | Code scanning alerts: Read | `security_events` or `repo` |
 | `PS002` | `GET /repos/{}/secret-scanning/alerts` | Secret scanning alerts: Read | `security_events` or `repo` |
 | `PS003` | `GET /repos/{}/vulnerability-alerts` | Administration: Read | `repo` (admin) |
+| `PS004` | `GET /repos/{}` (reads `security_and_analysis.secret_scanning_push_protection`) | Administration: Read | `repo` (admin) |
 | `PS020`-`PS025` | `GET /repos/{}/branches/{}/protection` | Administration: Read | `repo` (admin) |
 | `PS030`-`PS031` | `GET /repos/{}/contents/CODEOWNERS` | Contents: Read | `repo` or `public_repo` |
 | `CQ*`, `GH*`, `MS*`, `SR*` | (workflow file reads via `contents`) | Contents: Read | `repo` or `public_repo` |
@@ -276,9 +277,10 @@ Severities can be overridden per rule in `.bos-scan.yml`.
 
 | Rule  | Default | What it checks                                                                                          |
 | ----- | ------- | ------------------------------------------------------------------------------------------------------- |
-| PS001 | warn    | GitHub code scanning is **configured** for the repo (default-setup state).                              |
+| PS001 | warn    | GitHub code scanning is enabled via **either** Default setup **or** an Advanced workflow uploading CodeQL analyses. |
 | PS002 | warn    | GitHub secret scanning is enabled (probed via the secret-scanning alerts API).                          |
 | PS003 | warn    | Dependabot vulnerability alerts are enabled.                                                            |
+| PS004 | warn    | Secret-scanning **push protection** is enabled (refuses pushes that contain detected secrets; toggles independently of PS002). |
 | PS010 | warn    | Every workflow file declares an explicit top-level `permissions:` block.                                |
 | PS011 | warn    | No workflow uses `permissions: write-all` at the workflow or job level.                                 |
 | PS020 | warn    | The branch has _some_ branch-protection rule configured.                                                |

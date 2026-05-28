@@ -311,9 +311,10 @@ def _location_for(f: Finding) -> dict[str, Any]:
 
 
 _RULE_HELP = {
-    "PS001": "GHAS code scanning is enabled",
+    "PS001": "GHAS code scanning is enabled (Default or Advanced setup)",
     "PS002": "GHAS secret scanning is enabled",
     "PS003": "Dependabot vulnerability alerts are enabled",
+    "PS004": "Secret-scanning push protection is enabled",
     "PS010": "Every workflow declares a `permissions:` block",
     "PS011": "No workflow grants `permissions: write-all`",
     "PS020": "Branch is protected by a ruleset / protection rule",

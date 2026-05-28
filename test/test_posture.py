@@ -172,6 +172,10 @@ def test_ps001_pass_when_default_setup_configured():
         "/repos/o/r/code-scanning/default-setup": ({"state": "configured"}, 200),
         "/repos/o/r/secret-scanning/alerts?per_page=1": ([], 200),
         "/repos/o/r/vulnerability-alerts": (None, 204),
+        "/repos/o/r": (
+            {"security_and_analysis": {"secret_scanning_push_protection": {"status": "enabled"}}},
+            200,
+        ),
     })
     cfg = GHASPosture()
     out = posture_mod._audit_ghas(fake, "o", "r", cfg)
@@ -179,20 +183,98 @@ def test_ps001_pass_when_default_setup_configured():
     assert sev["PS001"] == "pass"
     assert sev["PS002"] == "pass"
     assert sev["PS003"] == "pass"
+    assert sev["PS004"] == "pass"
 
 
-def test_ps001_warns_when_not_configured():
+def test_ps001_pass_when_advanced_setup_active():
+    # Default-setup says not-configured (Advanced + Default are mutually
+    # exclusive in the UI) BUT the analyses endpoint reports an existing
+    # CodeQL upload — the repo is running CodeQL via Advanced. Without
+    # the fallback probe this case used to false-negative warn.
     fake = FakeGitHub({
         "/repos/o/r/code-scanning/default-setup": ({"state": "not-configured"}, 200),
-        "/repos/o/r/secret-scanning/alerts?per_page=1": (None, 404),
-        "/repos/o/r/vulnerability-alerts": (None, 404),
+        "/repos/o/r/code-scanning/analyses?tool_name=CodeQL&per_page=1": (
+            [{"id": 1, "tool": {"name": "CodeQL"}}],
+            200,
+        ),
+        "/repos/o/r/secret-scanning/alerts?per_page=1": ([], 200),
+        "/repos/o/r/vulnerability-alerts": (None, 204),
+        "/repos/o/r": (
+            {"security_and_analysis": {"secret_scanning_push_protection": {"status": "enabled"}}},
+            200,
+        ),
     })
     cfg = GHASPosture()
     out = posture_mod._audit_ghas(fake, "o", "r", cfg)
     sev = {f.rule_id: f.severity for f in out}
+    msg = {f.rule_id: f.message for f in out}
+    assert sev["PS001"] == "pass"
+    assert "Advanced" in msg["PS001"]
+
+
+def test_ps001_warns_when_neither_default_nor_advanced():
+    # Default-setup off AND no Advanced analyses uploaded — the rule
+    # should warn with the actionable remediation hint pointing at both
+    # UX paths.
+    fake = FakeGitHub({
+        "/repos/o/r/code-scanning/default-setup": ({"state": "not-configured"}, 200),
+        "/repos/o/r/code-scanning/analyses?tool_name=CodeQL&per_page=1": ([], 200),
+        "/repos/o/r/secret-scanning/alerts?per_page=1": (None, 404),
+        "/repos/o/r/vulnerability-alerts": (None, 404),
+        "/repos/o/r": (
+            {"security_and_analysis": {"secret_scanning_push_protection": {"status": "disabled"}}},
+            200,
+        ),
+    })
+    cfg = GHASPosture()
+    out = posture_mod._audit_ghas(fake, "o", "r", cfg)
+    sev = {f.rule_id: f.severity for f in out}
+    msg = {f.rule_id: f.message for f in out}
     assert sev["PS001"] == "warn"
     assert sev["PS002"] == "warn"
     assert sev["PS003"] == "warn"
+    assert sev["PS004"] == "warn"
+    # Remediation hints embedded in warn messages so the operator gets
+    # the Settings path without context-switching to docs.
+    assert "Settings" in msg["PS001"]
+    assert "Settings" in msg["PS002"]
+    assert "Settings" in msg["PS003"]
+    assert "Settings" in msg["PS004"]
+
+
+def test_ps004_skip_when_non_admin_token_hides_security_and_analysis():
+    # Non-admin tokens get `security_and_analysis` silently stripped from
+    # the repo object. The rule must `skip` ("we did not check") rather
+    # than `warn` ("it's off") so the operator isn't told to flip a
+    # toggle that may already be enabled.
+    fake = FakeGitHub({
+        "/repos/o/r/code-scanning/default-setup": ({"state": "configured"}, 200),
+        "/repos/o/r/secret-scanning/alerts?per_page=1": ([], 200),
+        "/repos/o/r/vulnerability-alerts": (None, 204),
+        "/repos/o/r": ({"name": "r"}, 200),  # `security_and_analysis` missing
+    })
+    cfg = GHASPosture()
+    out = posture_mod._audit_ghas(fake, "o", "r", cfg)
+    target = [f for f in out if f.rule_id == "PS004"]
+    assert target and target[0].severity == "skip"
+    assert "admin" in target[0].message
+
+
+def test_ps004_skip_on_403():
+    fake = FakeGitHub({
+        "/repos/o/r": (None, 403),
+    })
+    cfg = GHASPosture(
+        require_code_scanning="skip",
+        require_secret_scanning="skip",
+        require_dependabot_alerts="skip",
+        require_push_protection="warn",
+    )
+    out = posture_mod._audit_ghas(fake, "o", "r", cfg)
+    assert any(
+        f.rule_id == "PS004" and f.severity == "skip" and "forbidden" in f.message
+        for f in out
+    )
 
 
 def test_ps002_skip_on_403():
@@ -221,6 +303,7 @@ def test_skip_severities_skip_api_calls():
         require_code_scanning="skip",
         require_secret_scanning="skip",
         require_dependabot_alerts="skip",
+        require_push_protection="skip",
     )
     out = posture_mod._audit_ghas(fake, "o", "r", cfg)
     assert out == []
