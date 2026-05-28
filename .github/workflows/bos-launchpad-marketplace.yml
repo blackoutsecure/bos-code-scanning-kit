@@ -119,6 +119,28 @@ jobs:
       # ----- Per-repo customization (single source of truth) -----
       runtime_artifact_dir: 'src'
 
+      # ----- Extra files promoted dev → main on each release -----
+      # The composite `action.yml` shipped on `main` (and therefore on
+      # the floating `v1` tag) runs `pip install "${GITHUB_ACTION_PATH}"`
+      # to wire up the `bos-scan` CLI on the consumer's runner. That
+      # `pip install` needs `pyproject.toml` at the action root —
+      # without it consumers hit:
+      #
+      #   ERROR: Directory '/home/runner/work/_actions/blackoutsecure/
+      #   bos-code-scanning-kit/v1' is not installable. Neither
+      #   'setup.py' nor 'pyproject.toml' found.
+      #   …bos-scan: command not found (exit 127)
+      #   …Input required and not supplied: sarif_file
+      #
+      # The launchpad's default `allowlist_paths` is the Marketplace
+      # minimum (`action.yml`, `LICENSE`, `NOTICE`, `README.md`) plus
+      # the `runtime_artifact_dir` (`src/`) above. It deliberately
+      # excludes packaging metadata because most Marketplace actions
+      # don't need it. We do — `pyproject.toml` is the runtime contract
+      # between `action.yml` and the consumer's runner.
+      extra_sync_paths: |
+        pyproject.toml
+
       # CodeQL coverage for this kit is driven by the standalone
       # `.github/workflows/codeql.yml` (calls
       # `blackoutsecure/bos-automation-hub/.github/workflows/bos-launchpad-code-scan.yml@main`
