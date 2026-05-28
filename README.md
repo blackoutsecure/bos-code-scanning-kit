@@ -85,11 +85,23 @@ jobs:
 
       - uses: blackoutsecure/bos-code-scanning-kit@v1
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Prefer SCANNING_PAT when the org/repo has set it (unlocks
+          # PS002 / PS003 / PS020-PS025); otherwise fall back to the
+          # workflow's built-in GITHUB_TOKEN (PS001 only — the other
+          # posture rules emit `skip` rows). See § 'SCANNING_PAT —
+          # advanced posture credentials' below for the PAT recipe.
+          github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}
 ```
 
 That's it. The kit auto-discovers your ecosystem, runs every applicable
 scanner, audits posture, and uploads a single SARIF.
+
+> The `secrets.SCANNING_PAT || secrets.GITHUB_TOKEN` form is safe to
+> ship before you've created the PAT — when the secret is unset, the
+> expression evaluates to `secrets.GITHUB_TOKEN` and the kit runs in
+> baseline mode (PS001 only). Adding `SCANNING_PAT` at the org/repo
+> level later upgrades every consuming workflow automatically with no
+> code changes.
 
 ### Version pinning
 
@@ -115,7 +127,7 @@ the `commit` field of the GitHub Release JSON.
 | `owner` | _(none)_ | GitHub owner of the repo being scanned. Defaults to the workflow context. |
 | `repo` | _(none)_ | GitHub repo name being scanned. Defaults to the workflow context. |
 | `config` | _(none)_ | Path to `.bos-scan.yml`. Defaults to auto-discovery at the repo root. |
-| `github_token` | `${{ github.token }}` | Token used by the posture audit (PS001 code scanning, PS002 secret scanning, PS003 Dependabot alerts, PS020-PS025 branch protection). The default `${{ github.token }}` (the workflow's `GITHUB_TOKEN`, passed as `secrets.GITHUB_TOKEN` from the caller) is enough for PS001 only; PS002/PS003/PS020-PS025 need a PAT with admin reach. Classic PAT: tick `repo` (the only top-level scope that covers every probe). Fine-grained PAT: Repository permissions → Contents: Read, Metadata: Read, Administration: Read, Code scanning alerts: Read, Secret scanning alerts: Read. SAML-enforced orgs also need 'Configure SSO → Authorize' on the saved token. See the kit README § 'SCANNING_PAT — advanced posture credentials' for the full tick / don't-tick checklist. |
+| `github_token` | _(none)_ | Token used by the posture audit (PS001 code scanning, PS002 secret scanning, PS003 Dependabot alerts, PS020-PS025 branch protection). Leave empty to fall back to the workflow's built-in GITHUB_TOKEN, which is enough for PS001 only. PS002/PS003/PS020-PS025 require a PAT with admin reach — by org convention stored as a secret named `SCANNING_PAT`. See the kit README § 'SCANNING_PAT — advanced posture credentials' for the classic / fine-grained tick checklist and the recommended caller pattern. |
 | `enable_posture` | `true` | `true` to run the posture audit step. |
 | `enable_scanners` | `true` | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck). |
 | `enable_upload` | `true` | `true` to upload the merged SARIF to GitHub Advanced Security. |
@@ -147,6 +159,15 @@ the secret-scanning, Dependabot, or branch-protection endpoints —
 those return HTTP `403`, and the posture step records them as `skip`
 (not `pass` or `fail`) so the row is honest about what was checked.
 
+### TL;DR
+
+| Question | Answer |
+|---|---|
+| **Which token does the action prefer?** | Whichever the caller passes — the action sees one `github_token` input. The recommended caller pattern always prefers `SCANNING_PAT` over `GITHUB_TOKEN`: `github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}`. The expression is safe to ship before the PAT exists; when the secret is unset the `\|\|` falls through to `GITHUB_TOKEN`. |
+| **What classic-PAT scope do I need?** | Just the top-level `repo` checkbox. Nothing else. That's the only classic scope that simultaneously grants admin-read on `vulnerability-alerts` and `branches/*/protection`, and it auto-selects `security_events` (which is what makes PS001/PS002 work). |
+| **What does a `warn` finding mean vs a `skip` finding?** | `warn` = the feature really isn't enabled on the repo (e.g. GHAS code scanning is off). `skip` = your token couldn't see the endpoint (403). If you see `skip` rows, fix the token. If you see `warn` rows for PS001/PS002, enable the corresponding GHAS feature in **Settings → Code security**. |
+| **SAML SSO?** | Mandatory for any SAML-enforced org (incl. `blackoutsecure`). After creating the PAT, click **Configure SSO → Authorize** next to it for every org it will probe. Without this, every API call returns 403 and PS001-PS025 all degrade to `skip`. |
+
 To upgrade `skip` rows to real `pass`/`fail` evaluations, set
 `SCANNING_PAT` and pass it to the action's `github_token` input. The
 caller workflow shipped with `marketplace-kit generate-policy
@@ -176,6 +197,13 @@ Created at <https://github.com/settings/tokens> → **Generate new
 token (classic)**. The kit supports classic PATs because some org
 policies disable fine-grained tokens by default. Use the minimum-scope
 recipe below — anything broader is unnecessary surface area.
+
+**One scope. That's it: tick the top-level `repo` checkbox.**
+
+Nothing else needs to be ticked manually. GitHub auto-selects the
+five sub-scopes (`repo:status`, `repo_deployment`, `public_repo`,
+`repo:invite`, `security_events`) when you tick `repo`, and that
+combined set is precisely the minimum that covers every posture probe:
 
 **Tick exactly these:**
 

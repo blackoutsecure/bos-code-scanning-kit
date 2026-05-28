@@ -47,25 +47,30 @@ inputs:
     default: ''
 
   # ----- Authentication -----
+  #
+  # Recommended caller pattern (prefers SCANNING_PAT when the org has set it,
+  # otherwise falls back to the workflow's GITHUB_TOKEN automatically):
+  #
+  #   - uses: blackoutsecure/bos-code-scanning-kit@v1
+  #     with:
+  #       github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}
+  #
+  # Implementation note: action manifest scalars (defaults AND descriptions)
+  # cannot contain GitHub expression syntax — the legacy runner manifest
+  # parser evaluates such expressions at load time and rejects unknown
+  # contexts (e.g. `github.token` resolves only in workflow scope, not action
+  # manifest scope). That is why this input's default is the empty string and
+  # the `github.token` fallback is applied at the step level instead.
   github_token:
     description: >-
       Token used by the posture audit (PS001 code scanning, PS002 secret
       scanning, PS003 Dependabot alerts, PS020-PS025 branch protection).
-      When left empty (the default) the action falls back to the
-      workflow's built-in GITHUB_TOKEN (the github.token context value),
-      which is enough for PS001 only; PS002/PS003/PS020-PS025 need a PAT
-      with admin reach. Classic PAT: tick `repo` (the only top-level
-      scope that covers every probe). Fine-grained PAT: Repository
-      permissions → Contents: Read, Metadata: Read, Administration:
-      Read, Code scanning alerts: Read, Secret scanning alerts: Read.
-      SAML-enforced orgs also need 'Configure SSO → Authorize' on the
-      saved token. See the kit README § 'SCANNING_PAT — advanced posture
-      credentials' for the full tick / don't-tick checklist.
-      Note: action manifest scalars (including this description) cannot
-      contain GitHub expression syntax — the legacy runner manifest
-      parser evaluates such expressions at load time and rejects unknown
-      contexts. The github.token fallback is therefore applied at the
-      step level, not as a default value here.
+      Leave empty to fall back to the workflow's built-in GITHUB_TOKEN,
+      which is enough for PS001 only. PS002/PS003/PS020-PS025 require a
+      PAT with admin reach — by org convention stored as a secret named
+      `SCANNING_PAT`. See the kit README § 'SCANNING_PAT — advanced
+      posture credentials' for the classic / fine-grained tick checklist
+      and the recommended caller pattern.
     required: false
     default: ''
 
