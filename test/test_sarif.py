@@ -122,7 +122,12 @@ def test_posture_run_records_branch_locations():
     findings = [Finding("PS020", "fail", "no protection", location="branch:main")]
     run = sarif_mod.posture_run(findings)
     locs = run["results"][0]["locations"]
+    # Branch label preserved as a logicalLocation for the GHAS UI…
     assert locs[0]["logicalLocations"][0]["name"] == "branch:main"
+    # …but a physicalLocation MUST be present — GHAS rejects logical-only
+    # results with `locationFromSarifResult: expected a physical location`.
+    # Sentinel artifact is `.github/` (where security config lives).
+    assert locs[0]["physicalLocation"]["artifactLocation"]["uri"] == ".github/"
 
 
 def test_posture_run_records_file_locations():
@@ -135,9 +140,13 @@ def test_posture_run_records_file_locations():
 def test_posture_run_synthesises_repo_location_when_finding_has_none():
     # Regression: PS001/PS002/PS003 emit Finding(..., "error", str(exc))
     # with NO `location=` when the default GITHUB_TOKEN lacks the scope
-    # to query GHAS settings. SARIF results with `locations: []` are
-    # rejected by GHAS with `locationFromSarifResult: expected at least
-    # one location`. Every result MUST have >= 1 location entry.
+    # to query GHAS settings. SARIF results without a `physicalLocation`
+    # are rejected by GHAS with `locationFromSarifResult: expected a
+    # physical location` (an earlier validator revision only enforced
+    # `locations: []` being non-empty and accepted logical-only entries;
+    # the upload pipeline now rejects those too). Every result MUST
+    # include a `physicalLocation` — we synthesise one pointing at
+    # `.github/` and keep the repo logicalLocation for UI clarity.
     findings = [
         Finding("PS001", "error", "API 403 querying code-scanning settings"),
         Finding("PS002", "error", "API 403 querying secret-scanning settings"),
@@ -148,7 +157,9 @@ def test_posture_run_synthesises_repo_location_when_finding_has_none():
     for r in run["results"]:
         locs = r["locations"]
         assert len(locs) >= 1, f"result {r['ruleId']} must have >=1 location"
-        # Synthetic repo-wide logicalLocation
+        # Sentinel physicalLocation pointing at `.github/`
+        assert locs[0]["physicalLocation"]["artifactLocation"]["uri"] == ".github/"
+        # Synthetic repo-wide logicalLocation kept for UI label
         assert locs[0]["logicalLocations"][0]["name"] == "repository"
 
 
