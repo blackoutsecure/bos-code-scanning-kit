@@ -76,6 +76,13 @@ permissions:
   #   'actions: none, security-events: none'.
   security-events: write
   actions: read
+  # Same cascade rule for the AI changelog: the hub's `release` job
+  # -> `release-promote.yml` -> `github-release.yml` publish job
+  # statically requests `models: read` so the renderer can call the
+  # GitHub Models inference API. The cascade is validated at
+  # workflow-load time regardless of `release_ai_changelog` — and
+  # we opt this kit IN above, so the grant is required either way.
+  models: read
 
 concurrency:
   group: >-
@@ -97,6 +104,11 @@ jobs:
       # job is gated off via `enable_security_scan: false`.
       security-events: write
       actions: read
+      # See workflow-level note above — required by the hub
+      # reusable's `release` -> `release-promote.yml` ->
+      # `github-release.yml` cascade so the AI changelog step can
+      # reach the GitHub Models inference API.
+      models: read
     with:
       # ----- Event-routing context (forwarded from caller event) -----
       event_name:      ${{ github.event_name }}
