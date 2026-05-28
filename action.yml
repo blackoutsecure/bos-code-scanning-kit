@@ -49,11 +49,18 @@ inputs:
   # ----- Authentication -----
   github_token:
     description: >-
-      Token used by the posture audit. The workflow's default
-      `GITHUB_TOKEN` (passed as `secrets.GITHUB_TOKEN` from the
-      caller, or left unset to inherit `github.token`) is enough for
-      code-scanning probes; secret-scanning + Dependabot probes
-      require a PAT with `repo` + admin scope.
+      Token used by the posture audit (PS001 code scanning, PS002 secret
+      scanning, PS003 Dependabot alerts, PS020-PS025 branch protection).
+      The default `${{ github.token }}` (the workflow's `GITHUB_TOKEN`,
+      passed as `secrets.GITHUB_TOKEN` from the caller) is enough for
+      PS001 only; PS002/PS003/PS020-PS025 need a PAT with admin reach.
+      Classic PAT: tick `repo` (the only top-level scope that covers
+      every probe). Fine-grained PAT: Repository permissions → Contents:
+      Read, Metadata: Read, Administration: Read, Code scanning alerts:
+      Read, Secret scanning alerts: Read. SAML-enforced orgs also need
+      'Configure SSO → Authorize' on the saved token. See the kit
+      README § 'SCANNING_PAT — advanced posture credentials' for the
+      full tick / don't-tick checklist.
     required: false
     default: ${{ github.token }}
 
