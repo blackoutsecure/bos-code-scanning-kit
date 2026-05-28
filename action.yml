@@ -52,18 +52,20 @@ inputs:
       Token used by the posture audit (PS001 code scanning, PS002 secret
       scanning, PS003 Dependabot alerts, PS020-PS025 branch protection).
       When left empty (the default) the action falls back to the
-      workflow's built-in `${{ github.token }}` (`GITHUB_TOKEN`), which
-      is enough for PS001 only; PS002/PS003/PS020-PS025 need a PAT with
-      admin reach. Classic PAT: tick `repo` (the only top-level scope
-      that covers every probe). Fine-grained PAT: Repository permissions
-      → Contents: Read, Metadata: Read, Administration: Read, Code
-      scanning alerts: Read, Secret scanning alerts: Read. SAML-enforced
-      orgs also need 'Configure SSO → Authorize' on the saved token.
-      See the kit README § 'SCANNING_PAT — advanced posture credentials'
-      for the full tick / don't-tick checklist.
-      Note: action manifest `inputs.*.default` cannot reference the
-      `github` context, so the fallback is applied per step rather than
-      as a default value here.
+      workflow's built-in GITHUB_TOKEN (the github.token context value),
+      which is enough for PS001 only; PS002/PS003/PS020-PS025 need a PAT
+      with admin reach. Classic PAT: tick `repo` (the only top-level
+      scope that covers every probe). Fine-grained PAT: Repository
+      permissions → Contents: Read, Metadata: Read, Administration:
+      Read, Code scanning alerts: Read, Secret scanning alerts: Read.
+      SAML-enforced orgs also need 'Configure SSO → Authorize' on the
+      saved token. See the kit README § 'SCANNING_PAT — advanced posture
+      credentials' for the full tick / don't-tick checklist.
+      Note: action manifest scalars (including this description) cannot
+      contain GitHub expression syntax — the legacy runner manifest
+      parser evaluates such expressions at load time and rejects unknown
+      contexts. The github.token fallback is therefore applied at the
+      step level, not as a default value here.
     required: false
     default: ''
 
