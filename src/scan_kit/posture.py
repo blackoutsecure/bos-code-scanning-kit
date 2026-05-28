@@ -299,8 +299,13 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
             out.append(Finding("PS001", "pass",
                                "GHAS code scanning default-setup is configured"))
         elif status == 403:
-            out.append(Finding("PS001", "error",
-                               "code scanning probe forbidden — token needs `repo`"))
+            # Not an error — the default `GITHUB_TOKEN` lacks the scope to
+            # query this endpoint. Surface as `skip` so the row is honest
+            # ("we did not check") rather than alarming, and stays out of
+            # the SARIF upload entirely. Grant a PAT with `repo` via the
+            # `github_token` input to upgrade to a real pass/fail check.
+            out.append(Finding("PS001", "skip",
+                               "code scanning probe forbidden — token needs `repo` (provide a PAT to check)"))
         else:
             out.append(Finding(
                 "PS001", cfg.require_code_scanning,
@@ -316,8 +321,9 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
             out.append(Finding("PS002", cfg.require_secret_scanning,
                                "GHAS secret scanning is not enabled"))
         elif status == 403:
-            out.append(Finding("PS002", "error",
-                               "secret scanning probe forbidden — token needs `admin:org` or repo admin"))
+            # Token-scope limitation — see PS001 comment above.
+            out.append(Finding("PS002", "skip",
+                               "secret scanning probe forbidden — token needs `admin:org` or repo admin (provide a PAT to check)"))
         else:
             out.append(Finding("PS002", "error",
                                f"secret scanning probe returned unexpected status {status}"))
@@ -334,8 +340,9 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
             out.append(Finding("PS003", cfg.require_dependabot_alerts,
                                "Dependabot vulnerability alerts are not enabled"))
         elif status == 403:
-            out.append(Finding("PS003", "error",
-                               "Dependabot probe forbidden — token needs `repo:admin`"))
+            # Token-scope limitation — see PS001 comment above.
+            out.append(Finding("PS003", "skip",
+                               "Dependabot probe forbidden — token needs `repo:admin` (provide a PAT to check)"))
         else:
             out.append(Finding("PS003", "error",
                                f"Dependabot probe returned unexpected status {status}"))

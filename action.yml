@@ -49,9 +49,11 @@ inputs:
   # ----- Authentication -----
   github_token:
     description: >-
-      Token used by the posture audit. `${{ secrets.GITHUB_TOKEN }}` is
-      enough for code-scanning probes; secret-scanning + Dependabot
-      probes require a PAT with `repo` + admin scope.
+      Token used by the posture audit. The workflow's default
+      `GITHUB_TOKEN` (passed as `secrets.GITHUB_TOKEN` from the
+      caller, or left unset to inherit `github.token`) is enough for
+      code-scanning probes; secret-scanning + Dependabot probes
+      require a PAT with `repo` + admin scope.
     required: false
     default: ${{ github.token }}
 
@@ -262,7 +264,31 @@ runs:
         esac
         curl -sSLo /tmp/shellcheck.tar.xz \
           "https://github.com/koalaman/shellcheck/releases/download/v${SC_VERSION}/shellcheck-v${SC_VERSION}.linux.${sc_arch}.tar.xz"
-        tar -xJf /tmp/shellcheck.tar.xz -C /tmp
+        # Extract via Python's stdlib `lzma` + `tarfile` rather than
+        # `tar -xJf`. The shellcheck release tarballs are only published
+        # in `.tar.xz` form, and minimal / self-hosted runners (e.g.
+        # our own `docker-github-runner` image) do not ship the
+        # `xz` binary by default — `tar -xJf` then fails with
+        # `xz: Cannot exec: No such file or directory` (exit 2).
+        # CPython always bundles `lzma`, so this works anywhere
+        # `python3` is on PATH — which the SARIF-conversion block
+        # further down already requires. Honors the explicit
+        # "avoids `sudo apt-get` ... fails on minimal / self-hosted
+        # / non-Debian runners" design intent stated above.
+        python3 - <<'PY'
+        import tarfile
+        with tarfile.open("/tmp/shellcheck.tar.xz", "r:xz") as tf:
+            try:
+                # PEP 706 (Python 3.12+) — opt into the strict `data`
+                # filter explicitly. Avoids the DeprecationWarning on
+                # 3.12/3.13 and the hard error on 3.14+ when no filter
+                # is supplied to `extractall`.
+                tf.extractall("/tmp", filter="data")
+            except TypeError:
+                # Python <3.12 has no `filter` kwarg. Vendor binary
+                # release from a pinned tag — safe to extract as-is.
+                tf.extractall("/tmp")
+        PY
         SHELLCHECK="/tmp/shellcheck-v${SC_VERSION}/shellcheck"
         chmod +x "${SHELLCHECK}"
         # Collect findings as JSON, then convert to SARIF via a tiny
