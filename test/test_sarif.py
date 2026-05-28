@@ -207,3 +207,176 @@ def test_merge_with_posture_and_scanner(tmp_path: Path):
     text = json.dumps(merged, indent=2)
     assert "PS020" in text
     assert "GL01" in text
+
+
+# ---------------------------------------------------------------------------
+# sanitize_result / sanitize_run / merge() — defensive normalization
+# ---------------------------------------------------------------------------
+#
+# Regression: GHAS Code Scanning rejects the entire upload when ANY
+# result in ANY run has a `locations[]` entry without a usable
+# `physicalLocation` (missing/empty `artifactLocation.uri`), with the
+# error `locationFromSarifResult: expected a physical location`.
+# Gitleaks v8.21.x is the observed trigger — for a handful of detector
+# rules it emits results with empty URIs — but every upstream tool we
+# feed into the merger could in principle produce one.
+
+def test_sanitize_result_preserves_valid_physical_location():
+    """Valid entries — including gitleaks-style region/snippet data —
+    must round-trip untouched so we don't lose line numbers in the
+    Security tab.
+    """
+    result = {
+        "ruleId": "GL01",
+        "locations": [{
+            "physicalLocation": {
+                "artifactLocation": {"uri": "src/app.py"},
+                "region": {"startLine": 42, "snippet": {"text": "***"}},
+            },
+        }],
+    }
+    sarif_mod.sanitize_result(result)
+    pl = result["locations"][0]["physicalLocation"]
+    assert pl["artifactLocation"]["uri"] == "src/app.py"
+    assert pl["region"]["startLine"] == 42
+    assert pl["region"]["snippet"]["text"] == "***"
+
+
+def test_sanitize_result_synthesises_when_locations_missing():
+    """`results[]` entry with no `locations` key gets a sentinel."""
+    result = {"ruleId": "X"}
+    sarif_mod.sanitize_result(result)
+    locs = result["locations"]
+    assert len(locs) == 1
+    assert locs[0]["physicalLocation"]["artifactLocation"]["uri"] == ".github/"
+    assert locs[0]["logicalLocations"][0]["name"] == "repository"
+
+
+def test_sanitize_result_synthesises_when_locations_empty():
+    """`results[]` entry with `locations: []` gets a sentinel."""
+    result = {"ruleId": "X", "locations": []}
+    sarif_mod.sanitize_result(result)
+    assert len(result["locations"]) == 1
+    assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == ".github/"
+
+
+def test_sanitize_result_repairs_missing_physical_location():
+    """Logical-only location: graft a sentinel `physicalLocation`
+    while keeping the logical-location label for the UI.
+    """
+    result = {
+        "ruleId": "X",
+        "locations": [{"logicalLocations": [{"name": "main", "kind": "module"}]}],
+    }
+    sarif_mod.sanitize_result(result)
+    loc = result["locations"][0]
+    assert loc["physicalLocation"]["artifactLocation"]["uri"] == ".github/"
+    assert loc["logicalLocations"][0]["name"] == "main"
+
+
+def test_sanitize_result_repairs_empty_uri():
+    """The gitleaks-observed shape: physicalLocation present but URI
+    empty. Sentinel must overwrite the broken URI but not duplicate the
+    location.
+    """
+    result = {
+        "ruleId": "GL02",
+        "locations": [{
+            "physicalLocation": {
+                "artifactLocation": {"uri": ""},
+                "region": {"startLine": 1},
+            },
+        }],
+    }
+    sarif_mod.sanitize_result(result)
+    assert len(result["locations"]) == 1
+    assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == ".github/"
+
+
+def test_sanitize_result_repairs_missing_artifact_location():
+    """`physicalLocation` present but `artifactLocation` key missing."""
+    result = {
+        "ruleId": "GL03",
+        "locations": [{"physicalLocation": {"region": {"startLine": 5}}}],
+    }
+    sarif_mod.sanitize_result(result)
+    assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == ".github/"
+
+
+def test_sanitize_result_drops_non_object_entries():
+    """Garbage location entries get dropped; a sentinel is emitted if
+    no good entries remain.
+    """
+    result = {"ruleId": "X", "locations": ["bogus", 42, None]}
+    sarif_mod.sanitize_result(result)
+    assert len(result["locations"]) == 1
+    assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == ".github/"
+
+
+def test_sanitize_result_is_idempotent():
+    """Sanitization must converge in one pass."""
+    result = {"ruleId": "X"}
+    sarif_mod.sanitize_result(result)
+    snapshot = json.dumps(result, sort_keys=True)
+    sarif_mod.sanitize_result(result)
+    assert json.dumps(result, sort_keys=True) == snapshot
+
+
+def test_sanitize_run_handles_missing_results():
+    """Runs without a `results` key (or with non-list results) are no-ops."""
+    sarif_mod.sanitize_run({"tool": {"driver": {"name": "X"}}})
+    sarif_mod.sanitize_run({"tool": {"driver": {"name": "X"}}, "results": "nope"})
+
+
+def test_merge_invokes_sanitizer_on_every_run():
+    """Regression for `locationFromSarifResult: expected a physical
+    location` from gitleaks-merged results. The merger MUST repair
+    broken locations before the merged SARIF reaches the GHAS upload
+    action — otherwise the entire upload fails for all runs.
+    """
+    bad = {
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {"name": "gitleaks"}},
+            "results": [
+                # Three broken-shape leaks, mirroring the production
+                # failure observed in `docker-github-runner` runs.
+                {"ruleId": "gl-a", "message": {"text": "leak A"},
+                 "locations": [{"physicalLocation": {"artifactLocation": {"uri": ""}}}]},
+                {"ruleId": "gl-b", "message": {"text": "leak B"},
+                 "locations": [{"logicalLocations": [{"name": "blob"}]}]},
+                {"ruleId": "gl-c", "message": {"text": "leak C"}},
+            ],
+        }],
+    }
+    merged = sarif_mod.merge(bad)
+    results = merged["runs"][0]["results"]
+    assert len(results) == 3
+    for r in results:
+        assert len(r["locations"]) >= 1
+        pl = r["locations"][0]["physicalLocation"]
+        uri = pl["artifactLocation"]["uri"]
+        assert isinstance(uri, str) and uri  # non-empty
+
+
+def test_merge_does_not_mutate_good_results():
+    """A clean upstream run survives the merger byte-for-byte."""
+    good = {
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {"name": "actionlint"}},
+            "results": [{
+                "ruleId": "syntax-check",
+                "message": {"text": "OK"},
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": ".github/workflows/ci.yml"},
+                        "region": {"startLine": 7, "endLine": 7},
+                    },
+                }],
+            }],
+        }],
+    }
+    before = json.dumps(good, sort_keys=True)
+    sarif_mod.merge(good)
+    assert json.dumps(good, sort_keys=True) == before
