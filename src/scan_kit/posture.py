@@ -305,8 +305,10 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
     if cfg.require_code_scanning != "skip":
         body, status = gh.get_or_none(f"/repos/{owner}/{repo}/code-scanning/default-setup")
         if status == 200 and isinstance(body, dict) and body.get("state") == "configured":
-            out.append(Finding("PS001", "pass",
-                               "GHAS code scanning default-setup is configured"))
+            out.append(Finding(
+                "PS001", "pass",
+                "GHAS code scanning enabled — Default setup (recommended, managed by GitHub)",
+            ))
         elif status == 403:
             # Not an error — the default `GITHUB_TOKEN` lacks the scope to
             # query this endpoint. Surface as `skip` so the row is honest
@@ -329,12 +331,12 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
             if adv_status == 200 and isinstance(adv_body, list) and len(adv_body) > 0:
                 out.append(Finding(
                     "PS001", "pass",
-                    "GHAS code scanning via Advanced setup (CodeQL workflow uploading analyses)",
+                    "GHAS code scanning enabled — Advanced setup (caller-owned CodeQL workflow uploading analyses)",
                 ))
             else:
                 out.append(Finding(
                     "PS001", cfg.require_code_scanning,
-                    "GHAS code scanning is not enabled — Settings → Code security → Code scanning → Set up (Default), "
+                    "GHAS code scanning is not enabled — Settings → Code security → Code scanning → Set up (Default, recommended), "
                     "OR commit a workflow that calls `github/codeql-action/analyze` (Advanced)",
                 ))
 

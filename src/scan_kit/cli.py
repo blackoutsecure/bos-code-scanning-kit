@@ -239,23 +239,123 @@ def cmd_sarif(args: argparse.Namespace) -> int:
 # Output helpers
 # ---------------------------------------------------------------------------
 
+# ANSI severity palette. Honours the de-facto `NO_COLOR` standard
+# (https://no-color.org) and only emits escapes when the destination
+# is either a TTY or the GitHub Actions log surface (which renders
+# ANSI verbatim on the run page). Anything else (pytest StringIO,
+# pipes, redirected files) gets plain text — that keeps the SARIF
+# and the test suite untouched while making the run-page log readable.
+_SEV_COLOR = {
+    "pass":  "\033[32m",      # green
+    "warn":  "\033[33m",      # yellow
+    "fail":  "\033[31;1m",    # bold red
+    "error": "\033[35;1m",    # bold magenta — distinct from `fail`
+    "skip":  "\033[90m",      # bright black / grey
+}
+_RESET = "\033[0m"
+_DIM = "\033[2m"
+_BOLD = "\033[1m"
+
+# Rule-family display order — drives the section banners in the
+# posture table. Keys are PS-id prefixes, values are (header, blurb).
+_RULE_FAMILIES: tuple[tuple[str, str, str], ...] = (
+    ("PS00", "GHAS toggles",         "Code scanning, secret scanning, Dependabot, push protection"),
+    ("PS01", "Workflow permissions", "Per-file audit of `.github/workflows/*.yml`"),
+    ("PS02", "Branch protection",    "Required reviews, status checks, conversation resolution"),
+    ("PS03", "CODEOWNERS",           "Repo-level review routing"),
+)
+
+
+def _color_enabled(stream) -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
+        return True
+    return getattr(stream, "isatty", lambda: False)()
+
+
+def _paint(text: str, code: str, *, enabled: bool) -> str:
+    if not enabled or not code:
+        return text
+    return f"{code}{text}{_RESET}"
+
+
+def _family_for(rule_id: str) -> int:
+    """Return the `_RULE_FAMILIES` index for a finding (-1 = uncategorised)."""
+    for i, (prefix, _, _) in enumerate(_RULE_FAMILIES):
+        if rule_id.startswith(prefix):
+            return i
+    return -1
+
+
 def _print_posture_table(result: posture_mod.AuditResult) -> None:
+    color = _color_enabled(sys.stdout)
+    bullet = _paint("•", _DIM, enabled=color)
+
     if not result.findings:
-        print("(posture audit produced no findings)")
+        print(f"{bullet} posture audit produced no findings")
         return
+
+    # Bucket findings by rule family while preserving emission order
+    # inside each bucket — that keeps PS010/PS011 grouped per workflow
+    # and PS020+ grouped per branch without re-sorting.
+    buckets: dict[int, list] = {}
+    for f in result.findings:
+        buckets.setdefault(_family_for(f.rule_id), []).append(f)
 
     width_id = max(len(f.rule_id) for f in result.findings)
     width_sev = max(len(f.severity) for f in result.findings)
-    print(f"{'ID':<{width_id}}  {'SEV':<{width_sev}}  LOCATION / MESSAGE")
-    for f in result.findings:
+
+    def _row(f) -> str:
         loc = f"[{f.location}] " if f.location else ""
-        print(f"{f.rule_id:<{width_id}}  {f.severity:<{width_sev}}  {loc}{f.message}")
+        sev = _paint(f"{f.severity:<{width_sev}}",
+                     _SEV_COLOR.get(f.severity, ""), enabled=color)
+        rid = _paint(f"{f.rule_id:<{width_id}}", _BOLD, enabled=color)
+        return f"  {rid}  {sev}  {_paint(loc, _DIM, enabled=color)}{f.message}"
+
+    print(_paint("posture audit", _BOLD, enabled=color))
+
+    for idx, (_, header, blurb) in enumerate(_RULE_FAMILIES):
+        rows = buckets.get(idx)
+        if not rows:
+            continue
+        print()
+        print(_paint(f"━━ {header} ", _BOLD, enabled=color)
+              + _paint(f"— {blurb}", _DIM, enabled=color))
+        for f in rows:
+            print(_row(f))
+
+    # Anything we did not pre-categorise (PS000 setup errors, future
+    # rule families). Surfaced at the end so the operator never loses
+    # a finding to bucketing oversight.
+    misc = buckets.get(-1)
+    if misc:
+        print()
+        print(_paint("━━ Other", _BOLD, enabled=color))
+        for f in misc:
+            print(_row(f))
 
     fails = len(result.failed)
     warns = len(result.warned)
     passes = len(result.passed)
     errors = len(result.errored)
-    print(f"\nposture summary: {passes} pass, {warns} warn, {fails} fail, {errors} error")
+    skips = sum(1 for f in result.findings if f.severity == "skip")
+
+    print()
+    print(_paint("━━ Summary", _BOLD, enabled=color))
+    parts = [
+        _paint(f"{passes} pass", _SEV_COLOR["pass"], enabled=color),
+        _paint(f"{warns} warn", _SEV_COLOR["warn"], enabled=color),
+        _paint(f"{fails} fail", _SEV_COLOR["fail"], enabled=color),
+        _paint(f"{errors} error", _SEV_COLOR["error"], enabled=color),
+        _paint(f"{skips} skip", _SEV_COLOR["skip"], enabled=color),
+    ]
+    print("  " + "  ".join(parts))
+    if skips:
+        print("  " + _paint(
+            "skip = the audit could not run this check (typically a token-scope "
+            "limitation — supply a PAT via `github_token:` to upgrade to pass/fail).",
+            _DIM, enabled=color))
 
 
 def _write_step_summary(result: posture_mod.AuditResult) -> None:
@@ -263,23 +363,75 @@ def _write_step_summary(result: posture_mod.AuditResult) -> None:
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path:
         return
-    lines: list[str] = [
-        "## BOS Code Scanning Kit — posture audit",
-        "",
-        "| Rule | Severity | Location | Message |",
-        "| ---- | -------- | -------- | ------- |",
-    ]
-    for f in result.findings:
-        lines.append(
-            f"| `{f.rule_id}` | {f.severity} | "
-            f"{_md_escape(f.location) or '—'} | {_md_escape(f.message)} |"
-        )
-    lines.append("")
+
+    # Emoji per severity — renders in the GHA summary UI and gives the
+    # reviewer a fast visual scan equivalent to the console colours.
+    sev_icon = {"pass": "🟢", "warn": "🟡", "fail": "🔴",
+                "error": "🟣", "skip": "⚪"}
+
     fails = len(result.failed)
     warns = len(result.warned)
     passes = len(result.passed)
     errors = len(result.errored)
-    lines.append(f"**Summary:** {passes} pass, {warns} warn, {fails} fail, {errors} error.")
+    skips = sum(1 for f in result.findings if f.severity == "skip")
+
+    lines: list[str] = [
+        "## Posture audit",
+        "",
+        f"**Totals:** 🟢 {passes} pass · 🟡 {warns} warn · 🔴 {fails} fail · "
+        f"🟣 {errors} error · ⚪ {skips} skip",
+        "",
+    ]
+
+    if not result.findings:
+        lines.append("_No findings._")
+    else:
+        # Group by rule family for readability — same buckets the console
+        # table uses, so summary + log line up.
+        buckets: dict[int, list] = {}
+        for f in result.findings:
+            buckets.setdefault(_family_for(f.rule_id), []).append(f)
+
+        for idx, (_, header, blurb) in enumerate(_RULE_FAMILIES):
+            rows = buckets.get(idx)
+            if not rows:
+                continue
+            lines.append(f"### {header}")
+            lines.append(f"_{blurb}_")
+            lines.append("")
+            lines.append("| Rule | Severity | Location | Message |")
+            lines.append("| ---- | -------- | -------- | ------- |")
+            for f in rows:
+                icon = sev_icon.get(f.severity, "")
+                lines.append(
+                    f"| `{f.rule_id}` | {icon} {f.severity} | "
+                    f"{_md_escape(f.location) or '—'} | {_md_escape(f.message)} |"
+                )
+            lines.append("")
+
+        misc = buckets.get(-1)
+        if misc:
+            lines.append("### Other")
+            lines.append("")
+            lines.append("| Rule | Severity | Location | Message |")
+            lines.append("| ---- | -------- | -------- | ------- |")
+            for f in misc:
+                icon = sev_icon.get(f.severity, "")
+                lines.append(
+                    f"| `{f.rule_id}` | {icon} {f.severity} | "
+                    f"{_md_escape(f.location) or '—'} | {_md_escape(f.message)} |"
+                )
+            lines.append("")
+
+    if skips:
+        lines.append(
+            "> ⚪ **skip** rows mean the audit could not run that check — "
+            "typically a token-scope limitation. Supply a PAT via "
+            "`github_token:` (org convention: `SCANNING_PAT`) to upgrade "
+            "to pass/fail."
+        )
+        lines.append("")
+
     try:
         with Path(summary_path).open("a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")

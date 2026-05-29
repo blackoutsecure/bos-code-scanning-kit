@@ -54,10 +54,14 @@ LANG_EXT: dict[str, tuple[str, ...]] = {
     "typescript": (".ts", ".tsx"),
     "go":         (".go",),
     "java":       (".java",),
+    "kotlin":     (".kt", ".kts"),
     "csharp":     (".cs",),
     "ruby":       (".rb",),
     "rust":       (".rs",),
     "shell":      (".sh", ".bash"),
+    "c":          (".c", ".h"),
+    "cpp":        (".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"),
+    "swift":      (".swift",),
 }
 
 LANG_MARKERS: dict[str, tuple[str, ...]] = {
@@ -118,9 +122,13 @@ class Detection:
             "typescript": "javascript-typescript",
             "go":         "go",
             "java":       "java-kotlin",
+            "kotlin":     "java-kotlin",
             "csharp":     "csharp",
             "ruby":       "ruby",
             "rust":       "rust",
+            "c":          "c-cpp",
+            "cpp":        "c-cpp",
+            "swift":      "swift",
         }
         seen: list[str] = []
         for lang in self.languages:

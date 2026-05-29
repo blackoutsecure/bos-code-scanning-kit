@@ -3,7 +3,7 @@
 **Copyright © 2025-2026 Blackout Secure | Apache License 2.0**
 
 [![Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-blue?logo=github)](https://github.com/marketplace/actions/blackout-secure-code-scanning-kit)
-[![GitHub release](https://img.shields.io/github/v/release/blackoutsecure/bos-code-scanning-kit?sort=semver)](https://github.com/blackoutsecure/bos-code-scanning-kit/releases)
+[![GitHub release](https://img.shields.io/github/v/release/blackoutsecure/bos-code-scanning-kit)](https://github.com/blackoutsecure/bos-code-scanning-kit/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Made by BlackoutSecure](https://img.shields.io/badge/made%20by-BlackoutSecure-1f1f1f)](https://github.com/blackoutsecure)
 
@@ -146,6 +146,7 @@ the `commit` field of the GitHub Release JSON.
 | --- | --- |
 | `sarif_path` | Path to the merged SARIF file produced by the run. |
 | `posture_failures` | Number of FAIL findings from the posture audit. |
+| `outcome` | Severity-tier verdict for the run: `success` (no findings at any level), `warn` (only warning/note-level findings — nothing the enforcement policy would block on), or `failure` (at least one error-level finding from the posture audit or any scanner). Reflects severity only — it does NOT change based on `fail_on`, so callers can gate pipelines on the verdict independently of whether the kit step itself exited non-zero. |
 <!-- END action-outputs -->
 
 ## � `SCANNING_PAT` — advanced posture credentials
