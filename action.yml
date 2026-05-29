@@ -47,15 +47,32 @@ inputs:
     default: ''
 
   # ----- Authentication -----
+  #
+  # Recommended caller pattern (prefers SCANNING_PAT when the org has set it,
+  # otherwise falls back to the workflow's GITHUB_TOKEN automatically):
+  #
+  #   - uses: blackoutsecure/bos-code-scanning-kit@v1
+  #     with:
+  #       github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}
+  #
+  # Implementation note: action manifest scalars (defaults AND descriptions)
+  # cannot contain GitHub expression syntax — the legacy runner manifest
+  # parser evaluates such expressions at load time and rejects unknown
+  # contexts (e.g. `github.token` resolves only in workflow scope, not action
+  # manifest scope). That is why this input's default is the empty string and
+  # the `github.token` fallback is applied at the step level instead.
   github_token:
     description: >-
-      Token used by the posture audit. The workflow's default
-      `GITHUB_TOKEN` (passed as `secrets.GITHUB_TOKEN` from the
-      caller, or left unset to inherit `github.token`) is enough for
-      code-scanning probes; secret-scanning + Dependabot probes
-      require a PAT with `repo` + admin scope.
+      Token used by the posture audit (PS001 code scanning, PS002 secret
+      scanning, PS003 Dependabot alerts, PS020-PS025 branch protection).
+      Leave empty to fall back to the workflow's built-in GITHUB_TOKEN,
+      which is enough for PS001 only. PS002/PS003/PS020-PS025 require a
+      PAT with admin reach — by org convention stored as a secret named
+      `SCANNING_PAT`. See the kit README § 'SCANNING_PAT — advanced
+      posture credentials' for the classic / fine-grained tick checklist
+      and the recommended caller pattern.
     required: false
-    default: ${{ github.token }}
+    default: ''
 
   # ----- Scope gates (off → skip an entire stage) -----
   enable_posture:
@@ -93,6 +110,16 @@ outputs:
   posture_failures:
     description: 'Number of FAIL findings from the posture audit.'
     value: ${{ steps.posture.outputs.failures }}
+  outcome:
+    description: >-
+      Severity-tier verdict for the run: `success` (no findings at any
+      level), `warn` (only warning/note-level findings — nothing the
+      enforcement policy would block on), or `failure` (at least one
+      error-level finding from the posture audit or any scanner).
+      Reflects severity only — it does NOT change based on `fail_on`,
+      so callers can gate pipelines on the verdict independently of
+      whether the kit step itself exited non-zero.
+    value: ${{ steps.summary.outputs.outcome }}
 
 runs:
   using: composite
@@ -128,7 +155,7 @@ runs:
         GH_OWNER: ${{ inputs.owner || github.repository_owner }}
         GH_REPO:  ${{ inputs.repo  || github.event.repository.name }}
         GH_CFG:   ${{ inputs.config }}
-        GH_TOKEN: ${{ inputs.github_token }}
+        GH_TOKEN: ${{ inputs.github_token || github.token }}
         FAIL_ON:  ${{ inputs.fail_on }}
       run: |
         set -euo pipefail
@@ -380,52 +407,149 @@ runs:
         sarif_file: ${{ steps.merge.outputs.sarif_path }}
         category:   bos-code-scanning-kit
 
-    # ----- 6. Enforce failure policy (deferred from steps 2 + 3) -------
-    # Honours `fail_on: fail` for BOTH posture findings (step 2 exit code)
-    # AND scanner findings (counted from each scanner's SARIF). Deferring
-    # to the end of the run keeps SARIF upload (step 5) on the happy path
-    # even when the job is destined to fail.
-    - name: Enforce failure policy
-      if: always() && inputs.fail_on != 'never'
+    # ----- 6. Build job summary + compute outcome ----------------------
+    # Severity-aware verdict for the run, surfaced both as a
+    # GitHub Actions step-summary table (renders on the run page) AND
+    # as the `outcome` step output (consumed by the caller workflow to
+    # gate downstream jobs without re-parsing SARIF). Tiers:
+    #   success  → 0 findings of any level
+    #   warn     → only warning/note-level findings
+    #   failure  → at least one error-level finding
+    # The enforcement step that follows uses this output instead of
+    # re-counting SARIF results, so summary table + exit code can never
+    # disagree.
+    - id: summary
+      name: Summary + outcome
+      if: always()
       shell: bash
       env:
-        EC: ${{ steps.posture.outputs.exit_code }}
         ENABLE_POSTURE:  ${{ inputs.enable_posture }}
         ENABLE_SCANNERS: ${{ inputs.enable_scanners }}
+        ENABLE_UPLOAD:   ${{ inputs.enable_upload }}
+        FAIL_ON:         ${{ inputs.fail_on }}
+        SARIF_PATH:      ${{ steps.merge.outputs.sarif_path }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}"
-        fail=0
+        python3 - <<'PY'
+        import json, os, pathlib
 
-        # Posture failures: surface the exit code captured by step 2.
-        if [[ "${ENABLE_POSTURE}" == "true" && "${EC:-0}" != "0" ]]; then
-          echo "::error::posture audit reported failures (exit ${EC}). See the SARIF or the step-summary table."
-          fail=1
-        fi
+        scanners = [
+            ("Posture audit", "bos-scan-posture.sarif",    os.environ.get("ENABLE_POSTURE")  == "true"),
+            ("actionlint",    "bos-scan-actionlint.sarif", os.environ.get("ENABLE_SCANNERS") == "true"),
+            ("gitleaks",      "bos-scan-gitleaks.sarif",   os.environ.get("ENABLE_SCANNERS") == "true"),
+            ("shellcheck",    "bos-scan-shellcheck.sarif", os.environ.get("ENABLE_SCANNERS") == "true"),
+        ]
 
-        # Scanner findings: every bundled scanner uses `|| true` /
-        # `--exit-code 0` so its own step is always green. We honour
-        # `fail_on: fail` by counting results across each scanner's
-        # SARIF here.
-        if [[ "${ENABLE_SCANNERS}" == "true" ]]; then
-          for f in bos-scan-actionlint.sarif bos-scan-gitleaks.sarif bos-scan-shellcheck.sarif; do
-            [[ -s "${f}" ]] || continue
-            n=$(python3 - <<'PY' "${f}"
-        import json, sys
-        try:
-            d = json.load(open(sys.argv[1]))
-        except Exception:
-            print(0); sys.exit(0)
-        print(sum(len(r.get("results", [])) for r in d.get("runs", [])))
+        def counts(path):
+            e = w = n = 0
+            try:
+                d = json.load(open(path))
+            except Exception:
+                return None
+            for run in d.get("runs", []):
+                for r in run.get("results", []):
+                    lv = r.get("level", "warning")
+                    if lv == "error":     e += 1
+                    elif lv == "warning": w += 1
+                    else:                 n += 1
+            return (e, w, n)
+
+        rows = []
+        any_err = any_find = False
+        for label, name, enabled in scanners:
+            p = pathlib.Path(name)
+            if not enabled:
+                rows.append((label, "skipped", "stage disabled"))
+                continue
+            if not p.exists() or p.stat().st_size == 0:
+                rows.append((label, "skipped", "no SARIF produced"))
+                continue
+            c = counts(p)
+            if c is None:
+                rows.append((label, "warn", "SARIF unreadable"))
+                continue
+            e, w, n = c
+            if e:
+                rows.append((label, "failure", f"{e} error / {w} warn / {n} note"))
+                any_err = True
+                any_find = True
+            elif w + n:
+                rows.append((label, "warn", f"{w} warn / {n} note"))
+                any_find = True
+            else:
+                rows.append((label, "success", "no findings"))
+
+        if   any_err:  outcome = "failure"
+        elif any_find: outcome = "warn"
+        else:          outcome = "success"
+
+        badge = {"success": "success", "warn": "warn", "failure": "failure"}[outcome]
+        fail_on = os.environ.get("FAIL_ON", "fail")
+        if outcome == "failure" and fail_on != "never":
+            verdict = ("Pipeline will fail. Override via `fail_on: never` on the "
+                       "kit (advisory mode) or `security_scan_blocks_release: false` "
+                       "on the launchpad (run scan but do not gate release).")
+        elif outcome == "failure":
+            verdict = "Error-level findings present, but `fail_on: never` — pipeline continues."
+        elif outcome == "warn":
+            verdict = "Non-blocking findings present — pipeline continues."
+        else:
+            verdict = "No findings detected."
+
+        # ─── Console echo ────────────────────────────────────────────
+        # Mirror the per-stage table + outcome to the runner log too.
+        # GitHub Actions renders ANSI sequences verbatim, so colour the
+        # outcome badge and per-stage result for at-a-glance triage.
+        sev_color = {
+            "success":  "\033[32m",     # green
+            "warn":     "\033[33m",     # yellow
+            "failure":  "\033[31;1m",   # bold red
+            "skipped":  "\033[90m",     # grey
+        }
+        reset = "\033[0m"
+        bold  = "\033[1m"
+        label_w = max(len(label) for label, _, _ in rows)
+        res_w   = max(len(res)   for _, res, _ in rows)
+        print()
+        print(f"{bold}━━ Blackout Secure Code Scanning Kit — outcome: "
+              f"{sev_color.get(outcome, '')}{outcome}{reset}{bold} ━━{reset}")
+        for label, res, detail in rows:
+            colour = sev_color.get(res, "")
+            print(f"  {label.ljust(label_w)}  "
+                  f"{colour}{res.ljust(res_w)}{reset}  {detail}")
+        print(f"  {bold}verdict{reset}: {verdict}")
+        print()
+
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a", encoding="utf-8") as fh:
+                fh.write(f"## Blackout Secure Code Scanning Kit — {badge}\n\n")
+                fh.write("| Stage | Result | Findings |\n")
+                fh.write("|---|---|---|\n")
+                for label, result, detail in rows:
+                    fh.write(f"| {label} | {result} | {detail} |\n")
+                fh.write(f"\n**Outcome:** `{outcome}` — {verdict}\n")
+                if os.environ.get("ENABLE_UPLOAD") == "true" and os.environ.get("SARIF_PATH"):
+                    fh.write("\nMerged SARIF uploaded to the repo Security tab "
+                             "under category `bos-code-scanning-kit`.\n")
+
+        out = os.environ.get("GITHUB_OUTPUT")
+        if out:
+            with open(out, "a", encoding="utf-8") as fh:
+                fh.write(f"outcome={outcome}\n")
         PY
-        )
-            if [[ "${n}" != "0" ]]; then
-              tool="${f#bos-scan-}"
-              tool="${tool%.sarif}"
-              echo "::error::${tool} reported ${n} finding(s). See the SARIF in the Security tab for details."
-              fail=1
-            fi
-          done
-        fi
 
-        exit "${fail}"
+    # ----- 7. Enforce failure policy (deferred from steps 2 + 3) -------
+    # Hard-fails the action when the severity-tier `outcome` is
+    # `failure` AND `fail_on` is not `never`. Deferring to the end of
+    # the run keeps SARIF upload (step 5) and the job-summary table
+    # (step 6) on the happy path even when the job is destined to fail,
+    # so reviewers always have the merged findings + outcome table on
+    # the run page.
+    - name: Enforce failure policy
+      if: always() && inputs.fail_on != 'never' && steps.summary.outputs.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::error::bos-code-scanning-kit outcome=failure — at least one error-level finding. See the job summary for the per-stage breakdown, and the repo Security tab (category 'bos-code-scanning-kit') for details. Override with 'fail_on: never' (kit advisory mode) or 'security_scan_blocks_release: false' (launchpad)."
+        exit 1
