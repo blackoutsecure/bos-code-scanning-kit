@@ -201,6 +201,17 @@ PERMISSIONS_BLOCK = re.compile(r"^permissions\s*:", re.MULTILINE)
 WRITE_ALL = re.compile(r"^\s*permissions\s*:\s*write-all\s*$", re.MULTILINE)
 JOB_WRITE_ALL = re.compile(r"^\s{2,}permissions\s*:\s*write-all\s*$", re.MULTILINE)
 
+# PS012 — captures the `uses:` value (group 1) along with its line number
+# via re.finditer offsets. Tolerates the YAML list form (`- uses: ...`)
+# and the bare mapping form (`uses: ...`); strips an optional trailing
+# inline `# ...` comment and surrounding quotes inside the function so
+# the regex itself stays simple.
+USES_LINE = re.compile(
+    r"^[ \t]*-?[ \t]*uses:[ \t]*(?P<ref>[^\r\n]+?)[ \t]*(?:#.*)?$",
+    re.MULTILINE,
+)
+SHA_40 = re.compile(r"^[0-9a-f]{40}$")
+
 
 def _scan_workflow_perms(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
     """PS010 + PS011 — workflow-permissions audit, purely from the local checkout."""
@@ -252,6 +263,83 @@ def _scan_workflow_perms(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding
 
 
 # ---------------------------------------------------------------------------
+# PS012 — pinned-actions audit (workflows + composite action manifests)
+# ---------------------------------------------------------------------------
+
+def _scan_pinned_actions(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
+    """PS012 — every third-party `uses:` ref must be pinned to a 40-char SHA.
+
+    Walks both `.github/workflows/*.y*ml` and `.github/actions/**/*.y*ml`
+    (composite action manifests). Local (`./...`, `../...`) and
+    `docker://...` refs are exempt; `cfg.allow_tag_pin` exempts trusted
+    `owner/repo` entries.
+    """
+    out: list[Finding] = []
+    if cfg.require_pinned_actions == "skip":
+        return out
+
+    targets: list[Path] = []
+    wf_dir = repo_root / ".github" / "workflows"
+    if wf_dir.is_dir():
+        targets.extend(sorted(wf_dir.glob("*.y*ml")))
+    actions_dir = repo_root / ".github" / "actions"
+    if actions_dir.is_dir():
+        targets.extend(sorted(actions_dir.rglob("*.y*ml")))
+
+    if not targets:
+        return out
+
+    allow = frozenset(cfg.allow_tag_pin)
+
+    for path in targets:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            out.append(Finding(
+                "PS012", "error",
+                f"could not read file: {exc}",
+                location=path.relative_to(repo_root).as_posix(),
+            ))
+            continue
+
+        rel = path.relative_to(repo_root).as_posix()
+        offenders: list[tuple[int, str, str]] = []  # (line, ref, reason)
+        for match in USES_LINE.finditer(text):
+            raw_ref = match.group("ref").strip().strip("\"'")
+            if not raw_ref:
+                continue
+            # Local + docker refs are out of scope for PS012.
+            if raw_ref.startswith(("./", "../", "docker://")):
+                continue
+            line_no = text.count("\n", 0, match.start()) + 1
+            if "@" not in raw_ref:
+                offenders.append((line_no, raw_ref, "missing `@<sha>` suffix"))
+                continue
+            base, _, ver = raw_ref.partition("@")
+            owner_repo = "/".join(base.split("/")[:2])
+            if owner_repo in allow:
+                continue
+            if SHA_40.match(ver):
+                continue
+            offenders.append((line_no, raw_ref, f"version `{ver}` is not a 40-char SHA"))
+
+        if not offenders:
+            out.append(Finding("PS012", "pass",
+                               "all `uses:` references pinned to 40-char SHA",
+                               location=rel))
+            continue
+        for line_no, ref, reason in offenders:
+            out.append(Finding(
+                "PS012",
+                cfg.require_pinned_actions,
+                f"L{line_no}: `{ref}` — {reason}",
+                location=rel,
+            ))
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Audit entry points
 # ---------------------------------------------------------------------------
 
@@ -269,6 +357,7 @@ def audit(
     # Local-only checks (no API needed) — always run first so the
     # operator gets something even when the token is wrong.
     findings.extend(_scan_workflow_perms(repo_root, cfg.posture.workflows))
+    findings.extend(_scan_pinned_actions(repo_root, cfg.posture.workflows))
     findings.extend(_scan_codeowners_local(repo_root, cfg.posture.codeowners))
 
     # API-driven checks

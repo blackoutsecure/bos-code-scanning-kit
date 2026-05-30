@@ -284,6 +284,7 @@ Severities can be overridden per rule in `.bos-scan.yml`.
 | PS004 | warn    | Secret-scanning **push protection** is enabled (refuses pushes that contain detected secrets; toggles independently of PS002). |
 | PS010 | warn    | Every workflow file declares an explicit top-level `permissions:` block.                                |
 | PS011 | warn    | No workflow uses `permissions: write-all` at the workflow or job level.                                 |
+| PS012 | warn    | Every third-party `uses:` reference (in `.github/workflows/` and `.github/actions/`) is pinned to a 40-char commit SHA. Local (`./`) and `docker://` refs are exempt; trusted `owner/repo` entries can be added to `allow_tag_pin`. |
 | PS020 | warn    | The branch has _some_ branch-protection rule configured.                                                |
 | PS021 | warn    | The branch requires at least N approving reviews (per-branch override).                                 |
 | PS022 | warn    | The branch restricts force pushes (`allow_force_pushes.enabled = false`).                               |
@@ -365,6 +366,8 @@ posture:
   workflows:
     require_permissions_block: warn
     forbid_write_all:          warn
+    require_pinned_actions:    warn   # PS012 — fail | warn | skip
+    allow_tag_pin: []                 # owner/repo entries exempted from PS012 (e.g. ['actions/checkout'])
 
   branches:
     main:

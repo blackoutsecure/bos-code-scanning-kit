@@ -125,6 +125,103 @@ def test_no_workflow_dir_is_silent(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# PS012 — pinned-actions audit
+# ---------------------------------------------------------------------------
+
+SHA40 = "a" * 40
+
+
+def _write_action_yml(root: Path, name: str, body: str) -> Path:
+    p = root / ".github" / "actions" / name / "action.yml"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_ps012_pass_when_sha_pinned(tmp_path: Path):
+    _write_workflow(tmp_path, "ci.yml",
+                    f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@{SHA40}\n")
+    cfg = WorkflowsPosture(require_pinned_actions="fail")
+    findings = posture_mod._scan_pinned_actions(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS012"]
+    assert target and all(f.severity == "pass" for f in target)
+
+
+def test_ps012_fail_when_tag_pinned(tmp_path: Path):
+    _write_workflow(tmp_path, "ci.yml",
+                    "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n")
+    cfg = WorkflowsPosture(require_pinned_actions="fail")
+    findings = posture_mod._scan_pinned_actions(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS012"]
+    assert target and any(f.severity == "fail" for f in target)
+
+
+def test_ps012_allow_tag_pin_exempts_owner_repo(tmp_path: Path):
+    _write_workflow(tmp_path, "ci.yml",
+                    "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n")
+    cfg = WorkflowsPosture(require_pinned_actions="fail",
+                           allow_tag_pin=("actions/checkout",))
+    findings = posture_mod._scan_pinned_actions(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS012"]
+    assert target and all(f.severity == "pass" for f in target)
+
+
+def test_ps012_local_ref_exempt(tmp_path: Path):
+    _write_workflow(tmp_path, "ci.yml",
+                    "jobs:\n  a:\n    steps:\n      - uses: ./.github/actions/foo\n")
+    cfg = WorkflowsPosture(require_pinned_actions="fail")
+    findings = posture_mod._scan_pinned_actions(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS012"]
+    assert target and all(f.severity == "pass" for f in target)
+
+
+def test_ps012_docker_ref_exempt(tmp_path: Path):
+    _write_workflow(tmp_path, "ci.yml",
+                    "jobs:\n  a:\n    steps:\n      - uses: docker://alpine:3.20\n")
+    cfg = WorkflowsPosture(require_pinned_actions="fail")
+    findings = posture_mod._scan_pinned_actions(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS012"]
+    assert target and all(f.severity == "pass" for f in target)
+
+
+def test_ps012_walks_composite_action_manifest(tmp_path: Path):
+    _write_action_yml(tmp_path, "myaction",
+                      "runs:\n  using: composite\n  steps:\n    - uses: actions/checkout@v4\n      shell: bash\n")
+    cfg = WorkflowsPosture(require_pinned_actions="fail")
+    findings = posture_mod._scan_pinned_actions(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS012"]
+    assert target and any(f.severity == "fail" for f in target)
+    assert any("actions/myaction/action.yml" in (f.location or "")
+               for f in target)
+
+
+def test_ps012_skip_severity_emits_nothing(tmp_path: Path):
+    _write_workflow(tmp_path, "ci.yml",
+                    "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n")
+    cfg = WorkflowsPosture(require_pinned_actions="skip")
+    findings = posture_mod._scan_pinned_actions(tmp_path, cfg)
+    assert findings == []
+
+
+def test_ps012_warn_default_severity(tmp_path: Path):
+    _write_workflow(tmp_path, "ci.yml",
+                    "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n")
+    cfg = WorkflowsPosture()  # require_pinned_actions defaults to "warn"
+    findings = posture_mod._scan_pinned_actions(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS012"]
+    assert target and any(f.severity == "warn" for f in target)
+
+
+def test_ps012_no_at_suffix_is_offender(tmp_path: Path):
+    _write_workflow(tmp_path, "ci.yml",
+                    "jobs:\n  a:\n    steps:\n      - uses: actions/checkout\n")
+    cfg = WorkflowsPosture(require_pinned_actions="fail")
+    findings = posture_mod._scan_pinned_actions(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS012"]
+    assert target and any(f.severity == "fail" for f in target)
+
+
+# ---------------------------------------------------------------------------
 # CODEOWNERS scan (PS030, PS031)
 # ---------------------------------------------------------------------------
 
