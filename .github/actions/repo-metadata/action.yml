@@ -1,0 +1,239 @@
+name: Marketplace repo-metadata sync
+description: >-
+  Sync GitHub repository metadata (description, homepage, topics, and
+  the "Include in the home page" sidebar widget toggles) from
+  README-derived content or explicit caller-supplied values.
+  Intended to run as the last step of a Marketplace release so the
+  public-facing repo About box matches what was just published.
+
+  Duplicated at parity from `blackoutsecure/bos-marketplace-kit/.github/actions/repo-metadata/`
+  to keep this kit self-contained. When a third Marketplace kit
+  adopts the same sync, this composite should be promoted to
+  `blackoutsecure/bos-automation-hub/.github/actions/repo-metadata/`
+  and both call sites switched to the hub reference.
+
+  Precedence for every field (first non-empty wins):
+    1. The explicit input (`description`, `homepage`, `topics`) \u2014
+       always wins. AI is never consulted when an explicit value is
+       provided.
+    2. AI-generated content (when enabled and applicable).
+    3. Deterministic fallback (README seed for description;
+       `topics_fallback` for topics; leave unchanged otherwise).
+
+  AI behaviour when no explicit value is supplied:
+    * `description` \u2014 extracted from the README's leading prose
+      paragraph and rewritten by GitHub Models inference into a
+      single-line summary, hard-clamped to `description_max_length`
+      (default 350 \u2014 GitHub's repo-description limit). Deterministic
+      fallback uses the raw paragraph (still clamped) if AI is
+      unavailable or `models: read` was not granted.
+    * `topics` \u2014 only generated when `generate_topics: true` (opt-in).
+      Sanitized to match GitHub's topic rules (lowercase,
+      alphanumeric + hyphen, \u226450 chars, \u226420 per repo). Deterministic
+      fallback uses the `topics_fallback` list verbatim.
+    * `homepage` \u2014 never AI-derived. Either the caller supplies a URL
+      or the field is left unchanged.
+
+  "Include in the home page" widget toggles (Releases / Deployments /
+  Packages) are sent as `show_releases` / `show_deployments` /
+  `show_packages` on the standard repo PATCH. GitHub does not (as of
+  this writing) document these fields on the public REST API; the
+  request still succeeds because PATCH is permissive about unknown
+  fields. A `::notice::` is emitted so operators know the call was
+  best-effort. Description / homepage / topics are always set
+  authoritatively via documented endpoints.
+
+  Pure bash + jq + curl + python3. No third-party actions consumed.
+
+inputs:
+  repo:
+    description: >-
+      Target repository in `owner/repo` form. Leave empty (default) to
+      resolve at runtime from `GITHUB_REPOSITORY` (i.e. the repo this
+      workflow runs in). Pass an explicit `owner/repo` only when
+      managing metadata on a *different* repo than the calling
+      workflow's. Composite-action input `default:` cannot reference
+      the `github` context, so the runtime resolution lives in the
+      step's `env:` block below.
+    required: false
+    default: ''
+  github_token:
+    description: >-
+      Token used to PATCH the repository. Requires `repo` admin
+      (`Administration: write` on a fine-grained PAT). The default
+      `GITHUB_TOKEN` granted via `permissions: { contents: write }`
+      is **not** sufficient — pass a PAT or an installation token.
+      No default; the action fails closed if empty.
+    required: true
+  readme_path:
+    description: >-
+      Path to the README used as source material for AI generation.
+      Default `README.md`.
+    required: false
+    default: 'README.md'
+
+  # ----- Description ------------------------------------------------------
+  description:
+    description: >-
+      Explicit repo description. **When non-empty, this wins** — the
+      action skips both AI and the README seed and applies this
+      string verbatim (still hard-clamped to
+      `description_max_length`). Leave empty (default) to let AI /
+      README take over per `ai_enabled`.
+    required: false
+    default: ''
+  description_max_length:
+    description: >-
+      Hard upper bound on the final description, in characters.
+      GitHub stores up to ~350 chars for the repo description but
+      truncates the card preview much earlier; keep this conservative.
+      Default `350`.
+    required: false
+    default: '350'
+
+  # ----- Homepage ---------------------------------------------------------
+  homepage:
+    description: >-
+      Explicit URL to set as the repo Website (the "Website" field
+      in the About box). **When non-empty, this wins** and the
+      homepage is set verbatim (no AI is ever involved for this
+      field). Empty (default) leaves the existing homepage
+      unchanged. Pass the literal string `__unset__` to clear it.
+    required: false
+    default: ''
+
+  # ----- Topics -----------------------------------------------------------
+  topics:
+    description: >-
+      Explicit topics, space- or comma-separated. **When non-empty,
+      this wins** — the action skips AI entirely and applies this
+      list. Each topic is sanitized (lowercased, non-alphanumeric
+      collapsed to `-`, ≤50 chars) and the final list is truncated
+      to `max_topics` entries (GitHub caps at 20).
+    required: false
+    default: ''
+  generate_topics:
+    description: >-
+      `true` to ask GitHub Models to derive topics from the README
+      when `topics` is empty. `false` skips topic management entirely
+      (existing topics untouched). Default `false` — opt in.
+    required: false
+    default: 'false'
+  topics_fallback:
+    description: >-
+      Space- or comma-separated topics used when `generate_topics:
+      true` but the AI request fails. Same sanitization rules as
+      `topics`. Empty (default) means "do nothing on AI failure".
+    required: false
+    default: ''
+  max_topics:
+    description: >-
+      Hard upper bound on the number of topics applied. GitHub caps
+      a repo at 20 topics; values above 20 are clamped. Default `20`.
+    required: false
+    default: '20'
+
+  # ----- AI ---------------------------------------------------------------
+  ai_enabled:
+    description: >-
+      `true` to call GitHub Models for description / topic generation.
+      `false` skips AI entirely and uses the deterministic fallback
+      (raw README paragraph for description; `topics_fallback` for
+      topics). Default `true`. Set `false` when `models: read` cannot
+      be granted on the calling job.
+    required: false
+    default: 'true'
+  ai_model:
+    description: >-
+      GitHub Models model identifier (e.g. `openai/gpt-4o-mini`,
+      `openai/gpt-4o`). Only consulted when `ai_enabled: true`.
+    required: false
+    default: 'openai/gpt-4o-mini'
+
+  # ----- Home-page widget toggles -----------------------------------------
+  # Default reflects the "this is a release" framing: Releases ON,
+  # Deployments + Packages OFF. Operators opt-in to the latter two.
+  show_releases:
+    description: >-
+      Include the Releases widget on the repo home page. Default
+      `true` because the action is intended to run on release.
+    required: false
+    default: 'true'
+  show_deployments:
+    description: >-
+      Include the Deployments widget on the repo home page. Default
+      `false` — opt in if your repo uses GitHub Deployments.
+    required: false
+    default: 'false'
+  show_packages:
+    description: >-
+      Include the Packages widget on the repo home page. Default
+      `false` — opt in if your repo publishes GitHub Packages.
+    required: false
+    default: 'false'
+
+  # ----- Behaviour --------------------------------------------------------
+  dry_run:
+    description: >-
+      `true` validates inputs, generates the proposed payload, and
+      logs the resolved description / homepage / topics to the job
+      summary, but does NOT call the GitHub API. Default `false`.
+    required: false
+    default: 'false'
+
+outputs:
+  description:
+    description: 'Final description applied (or computed under `dry_run`).'
+    value: ${{ steps.run.outputs.description }}
+  description_source:
+    description: "`explicit` | `ai` | `readme` | `existing` — how the description was resolved."
+    value: ${{ steps.run.outputs.description_source }}
+  homepage:
+    description: 'Final homepage applied (empty if left unchanged).'
+    value: ${{ steps.run.outputs.homepage }}
+  topics:
+    description: 'Final topics applied, space-separated (empty if left unchanged).'
+    value: ${{ steps.run.outputs.topics }}
+  topics_source:
+    description: "`explicit` | `ai` | `fallback` | `skipped` — how topics were resolved."
+    value: ${{ steps.run.outputs.topics_source }}
+  ai_used:
+    description: "`true` when GitHub Models produced the description or topics."
+    value: ${{ steps.run.outputs.ai_used }}
+  applied:
+    description: "`true` when at least one PATCH/PUT was sent successfully; `false` under `dry_run` or when nothing changed."
+    value: ${{ steps.run.outputs.applied }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        # `inputs.repo` is optional; fall back to the caller workflow's
+        # repository. The `||` resolution happens in the env block
+        # because composite-action `inputs.*.default:` cannot reference
+        # `github.*` (template-validation rejects it at action-load
+        # time; surfaces as `Unrecognized named-value: 'github'`).
+        REPO:                ${{ inputs.repo || github.repository }}
+        GH_TOKEN:            ${{ inputs.github_token }}
+        README_PATH:         ${{ inputs.readme_path }}
+        DESCRIPTION:         ${{ inputs.description }}
+        DESCRIPTION_MAX_LEN: ${{ inputs.description_max_length }}
+        HOMEPAGE:            ${{ inputs.homepage }}
+        TOPICS:              ${{ inputs.topics }}
+        GENERATE_TOPICS:     ${{ inputs.generate_topics }}
+        TOPICS_FALLBACK:     ${{ inputs.topics_fallback }}
+        MAX_TOPICS:          ${{ inputs.max_topics }}
+        AI_ENABLED:          ${{ inputs.ai_enabled }}
+        AI_MODEL:            ${{ inputs.ai_model }}
+        SHOW_RELEASES:       ${{ inputs.show_releases }}
+        SHOW_DEPLOYMENTS:    ${{ inputs.show_deployments }}
+        SHOW_PACKAGES:       ${{ inputs.show_packages }}
+        DRY_RUN:             ${{ inputs.dry_run }}
+      run: |
+        set -euo pipefail
+        export ERR_TITLE='Marketplace repo-metadata'
+        # shellcheck source=/dev/null
+        . "${GITHUB_ACTION_PATH}/../_lib/lib.sh"
+        bash "${GITHUB_ACTION_PATH}/run.sh"
