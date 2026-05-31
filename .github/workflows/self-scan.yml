@@ -47,6 +47,11 @@ name: Self-scan · dogfood action against own repo
         required: false
         type: boolean
         default: false
+      http_timeout:
+        description: 'Per-request HTTP timeout (seconds) for posture probes. Default 20. Bump to ride out GH API latency or slow self-hosted egress.'
+        required: false
+        type: string
+        default: '20'
 
 permissions:
   contents: read
@@ -179,6 +184,7 @@ jobs:
           enable_scanners: 'true'
           enable_upload: 'true'
           fail_on: ${{ inputs.fail_on || 'never' }}
+          http_timeout: ${{ inputs.http_timeout || '20' }}
           github_token: ${{ steps.mode.outputs.use_pat == 'true' && secrets['SCANNING_PAT'] || github.token }}
       - name: Show outputs
         if: always()

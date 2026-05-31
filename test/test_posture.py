@@ -222,6 +222,70 @@ def test_ps012_no_at_suffix_is_offender(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# PS013 — Microsoft Security DevOps detection
+# ---------------------------------------------------------------------------
+
+def test_ps013_default_skip_when_absent(tmp_path: Path):
+    """No MSDO + default `skip` severity → single skip row (drops from SARIF)."""
+    _write_workflow(tmp_path, "ci.yml",
+                    f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@{SHA40}\n")
+    cfg = WorkflowsPosture()  # detect_msdo defaults to "skip"
+    findings = posture_mod._scan_msdo(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS013"]
+    assert len(target) == 1
+    assert target[0].severity == "skip"
+
+
+def test_ps013_pass_with_details_when_sha_pinned(tmp_path: Path):
+    """MSDO present + SHA-pinned → pass row with shortened SHA in details."""
+    _write_workflow(
+        tmp_path, "msdo.yml",
+        "jobs:\n  scan:\n    steps:\n"
+        f"      - uses: microsoft/security-devops-action@{SHA40}\n",
+    )
+    cfg = WorkflowsPosture()
+    findings = posture_mod._scan_msdo(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS013"]
+    assert target and all(f.severity == "pass" for f in target)
+    assert any("SHA-pinned" in f.message for f in target)
+    assert any("msdo.yml" in (f.location or "") for f in target)
+
+
+def test_ps013_pass_with_details_when_tag_pinned(tmp_path: Path):
+    """MSDO present + tag-pinned → pass row but flags pinning quality in details."""
+    _write_workflow(
+        tmp_path, "msdo.yml",
+        "jobs:\n  scan:\n    steps:\n"
+        "      - uses: microsoft/security-devops-action@v1\n",
+    )
+    cfg = WorkflowsPosture()
+    findings = posture_mod._scan_msdo(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS013"]
+    assert target and all(f.severity == "pass" for f in target)
+    assert any("tag/branch-pinned" in f.message and "`v1`" in f.message
+               for f in target)
+
+
+def test_ps013_warn_when_absent_and_warn_severity(tmp_path: Path):
+    """Operator opts in → absent MSDO surfaces at the requested severity."""
+    _write_workflow(tmp_path, "ci.yml",
+                    f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@{SHA40}\n")
+    cfg = WorkflowsPosture(detect_msdo="warn")
+    findings = posture_mod._scan_msdo(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS013"]
+    assert target and target[0].severity == "warn"
+
+
+def test_ps013_no_workflow_dir(tmp_path: Path):
+    """No .github/workflows/ at all → single row at configured severity."""
+    cfg = WorkflowsPosture(detect_msdo="warn")
+    findings = posture_mod._scan_msdo(tmp_path, cfg)
+    target = [f for f in findings if f.rule_id == "PS013"]
+    assert target and target[0].severity == "warn"
+    assert "no `.github/workflows/` directory" in target[0].message
+
+
+# ---------------------------------------------------------------------------
 # CODEOWNERS scan (PS030, PS031)
 # ---------------------------------------------------------------------------
 
@@ -339,6 +403,57 @@ def test_ps001_warns_when_neither_default_nor_advanced():
     assert "Settings" in msg["PS004"]
 
 
+def test_ps001_pass_when_default_setup_forbidden_but_advanced_active():
+    # Baseline-token reality: default-setup returns 403, BUT the
+    # analyses endpoint (only needs `security_events: read`, which
+    # `GITHUB_TOKEN` grants) reports an existing CodeQL upload. The
+    # repo is running Advanced setup; the rule should pass instead of
+    # falsely skipping. This is the case that motivated lifting the
+    # analyses fallback out of the non-403 branch.
+    fake = FakeGitHub({
+        "/repos/o/r/code-scanning/default-setup": (None, 403),
+        "/repos/o/r/code-scanning/analyses?tool_name=CodeQL&per_page=1": (
+            [{"id": 1, "tool": {"name": "CodeQL"}}],
+            200,
+        ),
+        "/repos/o/r/secret-scanning/alerts?per_page=1": ([], 200),
+        "/repos/o/r/vulnerability-alerts": (None, 204),
+        "/repos/o/r": (
+            {"security_and_analysis": {"secret_scanning_push_protection": {"status": "enabled"}}},
+            200,
+        ),
+    })
+    cfg = GHASPosture()
+    out = posture_mod._audit_ghas(fake, "o", "r", cfg)
+    target = [f for f in out if f.rule_id == "PS001"]
+    assert target and target[0].severity == "pass"
+    assert "Advanced" in target[0].message
+
+
+def test_ps001_skip_when_default_setup_forbidden_and_no_advanced_analyses():
+    # Default-setup forbidden AND analyses comes back empty (or also
+    # forbidden, or any non-200). We cannot distinguish "Default setup
+    # we can't see" from "Advanced not-yet-scanned" from "genuinely
+    # off", so `skip` is the only honest verdict. Message should hint
+    # at the PAT upgrade path so the operator knows how to promote
+    # this to a real check.
+    fake = FakeGitHub({
+        "/repos/o/r/code-scanning/default-setup": (None, 403),
+        "/repos/o/r/code-scanning/analyses?tool_name=CodeQL&per_page=1": ([], 200),
+        "/repos/o/r/secret-scanning/alerts?per_page=1": ([], 200),
+        "/repos/o/r/vulnerability-alerts": (None, 204),
+        "/repos/o/r": (
+            {"security_and_analysis": {"secret_scanning_push_protection": {"status": "enabled"}}},
+            200,
+        ),
+    })
+    cfg = GHASPosture()
+    out = posture_mod._audit_ghas(fake, "o", "r", cfg)
+    target = [f for f in out if f.rule_id == "PS001"]
+    assert target and target[0].severity == "skip"
+    assert "PAT" in target[0].message
+
+
 def test_ps004_skip_when_non_admin_token_hides_security_and_analysis():
     # Non-admin tokens get `security_and_analysis` silently stripped from
     # the repo object. The rule must `skip` ("we did not check") rather
@@ -405,6 +520,157 @@ def test_skip_severities_skip_api_calls():
     out = posture_mod._audit_ghas(fake, "o", "r", cfg)
     assert out == []
     assert fake.calls == []
+
+
+# ---------------------------------------------------------------------------
+# GHAS entitlement gate (PS001/PS002/PS004 skip when SKU not enabled)
+# ---------------------------------------------------------------------------
+
+def test_ghas_not_entitled_skips_ps001_ps002_ps004_but_runs_ps003():
+    # Private repo whose `security_and_analysis.advanced_security.status`
+    # is explicitly "disabled" → the operator literally cannot enable
+    # code scanning / secret scanning / push protection without buying
+    # the GHAS SKU. Warning them is noise; skip the three GHAS probes
+    # but still run PS003 (Dependabot alerts are free on every plan).
+    fake = FakeGitHub({
+        "/repos/o/r": (
+            {
+                "visibility": "private",
+                "private": True,
+                "security_and_analysis": {
+                    "advanced_security": {"status": "disabled"},
+                },
+            },
+            200,
+        ),
+        # Dependabot is GHAS-independent; the probe still runs.
+        "/repos/o/r/vulnerability-alerts": (None, 204),
+    })
+    cfg = GHASPosture()
+    out = posture_mod._audit_ghas(fake, "o", "r", cfg)
+    sev = {f.rule_id: f.severity for f in out}
+    msg = {f.rule_id: f.message for f in out}
+    assert sev["PS001"] == "skip"
+    assert sev["PS002"] == "skip"
+    assert sev["PS003"] == "pass"
+    assert sev["PS004"] == "skip"
+    # Message must name the SKU so the operator knows it's a paid-tier
+    # issue, not a toggle they forgot to flip.
+    assert "Advanced Security" in msg["PS001"]
+    assert "Advanced Security" in msg["PS002"]
+    assert "Advanced Security" in msg["PS004"]
+
+
+def test_ghas_entitlement_gate_skips_ghas_endpoints_when_not_entitled():
+    # The skip path must NOT touch the GHAS-only endpoints (default-setup,
+    # secret-scanning/alerts) — those would return 403/404 and waste a
+    # round trip. Verify only the repo metadata + Dependabot endpoints
+    # are hit when entitlement comes back "not_entitled".
+    fake = FakeGitHub({
+        "/repos/o/r": (
+            {
+                "private": True,
+                "security_and_analysis": {
+                    "advanced_security": {"status": "disabled"},
+                },
+            },
+            200,
+        ),
+        "/repos/o/r/vulnerability-alerts": (None, 204),
+    })
+    cfg = GHASPosture()
+    posture_mod._audit_ghas(fake, "o", "r", cfg)
+    called = set(fake.calls)
+    assert "/repos/o/r" in called
+    assert "/repos/o/r/vulnerability-alerts" in called
+    # These GHAS-paywalled endpoints must be skipped.
+    assert "/repos/o/r/code-scanning/default-setup" not in called
+    assert "/repos/o/r/secret-scanning/alerts?per_page=1" not in called
+
+
+def test_public_repo_is_entitled_even_without_advanced_security_field():
+    # Public repos get GHAS code/secret scanning for free; the
+    # `security_and_analysis.advanced_security` field is typically
+    # absent on public-repo bodies. Must NOT misclassify as
+    # "not_entitled" — the probes should run normally.
+    fake = FakeGitHub({
+        "/repos/o/r": (
+            {"visibility": "public", "private": False},
+            200,
+        ),
+        "/repos/o/r/code-scanning/default-setup": ({"state": "configured"}, 200),
+        "/repos/o/r/secret-scanning/alerts?per_page=1": ([], 200),
+        "/repos/o/r/vulnerability-alerts": (None, 204),
+    })
+    cfg = GHASPosture()
+    out = posture_mod._audit_ghas(fake, "o", "r", cfg)
+    sev = {f.rule_id: f.severity for f in out}
+    # PS001/PS002/PS003 pass; PS004 skips because push-protection field
+    # is absent in this response (non-admin token shape) — that's the
+    # existing skip path, not the entitlement skip.
+    assert sev["PS001"] == "pass"
+    assert sev["PS002"] == "pass"
+    assert sev["PS003"] == "pass"
+    assert sev["PS004"] == "skip"
+
+
+def test_private_repo_with_advanced_security_enabled_runs_probes():
+    # Private repo with GHAS explicitly enabled → entitlement is
+    # "entitled" and existing probes run normally.
+    fake = FakeGitHub({
+        "/repos/o/r": (
+            {
+                "private": True,
+                "security_and_analysis": {
+                    "advanced_security": {"status": "enabled"},
+                    "secret_scanning_push_protection": {"status": "enabled"},
+                },
+            },
+            200,
+        ),
+        "/repos/o/r/code-scanning/default-setup": ({"state": "configured"}, 200),
+        "/repos/o/r/secret-scanning/alerts?per_page=1": ([], 200),
+        "/repos/o/r/vulnerability-alerts": (None, 204),
+    })
+    cfg = GHASPosture()
+    out = posture_mod._audit_ghas(fake, "o", "r", cfg)
+    sev = {f.rule_id: f.severity for f in out}
+    assert sev["PS001"] == "pass"
+    assert sev["PS002"] == "pass"
+    assert sev["PS003"] == "pass"
+    assert sev["PS004"] == "pass"
+
+
+def test_unknown_entitlement_falls_through_to_existing_probe_logic():
+    # When the repo metadata fetch is forbidden (403), entitlement is
+    # "unknown" — the per-probe 403/404 handling (existing behavior)
+    # must still produce the right skip rows. This is the baseline-
+    # token scenario where the operator hasn't supplied a PAT.
+    fake = FakeGitHub({
+        "/repos/o/r": (None, 403),
+        "/repos/o/r/code-scanning/default-setup": (None, 403),
+        "/repos/o/r/code-scanning/analyses?tool_name=CodeQL&per_page=1": ([], 200),
+        "/repos/o/r/secret-scanning/alerts?per_page=1": (None, 403),
+        "/repos/o/r/vulnerability-alerts": (None, 204),
+    })
+    cfg = GHASPosture()
+    out = posture_mod._audit_ghas(fake, "o", "r", cfg)
+    sev = {f.rule_id: f.severity for f in out}
+    msg = {f.rule_id: f.message for f in out}
+    # All three GHAS probes hit their existing "skip on 403/forbidden"
+    # branches — NOT the entitlement-skip branch.
+    assert sev["PS001"] == "skip"
+    assert "forbidden" in msg["PS001"]
+    assert sev["PS002"] == "skip"
+    assert "forbidden" in msg["PS002"]
+    assert sev["PS003"] == "pass"  # Dependabot endpoint returned 204.
+    assert sev["PS004"] == "skip"
+    assert "forbidden" in msg["PS004"]
+    # And neither PS001 nor PS002 nor PS004 should mention the GHAS SKU
+    # (that's reserved for the explicit "not_entitled" path).
+    assert "Advanced Security" not in msg["PS001"]
+    assert "Advanced Security" not in msg["PS002"]
+    assert "Advanced Security" not in msg["PS004"]
 
 
 # ---------------------------------------------------------------------------

@@ -66,7 +66,14 @@ jobs:
     # so this expression has no fallback — see the hub's README
     # ("Runner resolution") for the full rationale.
     runs-on: ${{ fromJSON(startsWith(vars.DEFAULT_RUNNER, '[') && vars.DEFAULT_RUNNER || format('"{0}"', vars.DEFAULT_RUNNER)) }}
-    timeout-minutes: 5
+    # 10 (was 5). Same defensive bump applied across the org's Python
+    # CLI test workflows: cold-cache `actions/setup-python` can eat
+    # 2-3min, `pip install -e .[dev]` ~30-60s, pytest ~1min. 5 left
+    # essentially no headroom and a tail-end stall during post-job
+    # cleanup would mark the run `cancelled` — which any caller
+    # using `gh run watch --exit-status` reads as failed (see
+    # bos-marketplace-kit run 26713202689 for the same pattern).
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

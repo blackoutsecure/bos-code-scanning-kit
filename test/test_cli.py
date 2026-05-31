@@ -143,6 +143,93 @@ def test_posture_writes_sarif(monkeypatch, tmp_path: Path):
     assert payload["runs"]
 
 
+def test_posture_writes_skips_json_sidecar(monkeypatch, tmp_path: Path):
+    """`--skips-json` must always write a well-formed sidecar.
+
+    Even when no probe skipped, the file should exist with an empty
+    `skips: []` list so the consumer (action.yml summary step) can
+    treat the sidecar as the single source of truth and never has to
+    guess between "no skips" and "the run never wrote the file".
+    """
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    skips_path = tmp_path / "skips.json"
+    out = io.StringIO()
+    err = io.StringIO()
+    with redirect_stderr(err), redirect_stdout(out):
+        rc = cli_mod.main([
+            "posture",
+            "--owner", "o", "--repo", "r",
+            "--root", str(tmp_path),
+            "--skips-json", str(skips_path),
+            "--fail-on", "never",
+        ])
+    assert rc == 0
+    assert skips_path.exists()
+    payload = json.loads(skips_path.read_text())
+    assert "skips" in payload
+    assert isinstance(payload["skips"], list)
+    # No token + no live API → no API-driven probe emits a skip; PS000
+    # is `error` (excluded). PS013 (Microsoft Security DevOps detection)
+    # always emits exactly one row at the configured severity — default
+    # `skip` when the workflow has no MSDO call site — so the sidecar
+    # for this bare-repo + no-token scenario should contain exactly
+    # that one skip and nothing else.
+    skip_rules = [s["rule_id"] for s in payload["skips"]]
+    assert skip_rules == ["PS013"]
+
+
+def test_posture_http_timeout_default_is_20(monkeypatch, tmp_path: Path):
+    """`--http-timeout` defaults to 20 and flows into `posture.audit`."""
+    captured: dict[str, object] = {}
+
+    def fake_audit(**kwargs):
+        captured.update(kwargs)
+        # Return the real audit's no-token result shape so the rest of
+        # cmd_posture (printing, sarif, summary, exit code) runs the
+        # same path as the unmocked test above.
+        from scan_kit import posture as posture_mod_real
+        return posture_mod_real.AuditResult(findings=())
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(cli_mod.posture_mod, "audit", fake_audit)
+    out = io.StringIO()
+    err = io.StringIO()
+    with redirect_stderr(err), redirect_stdout(out):
+        rc = cli_mod.main([
+            "posture",
+            "--owner", "o", "--repo", "r",
+            "--root", str(tmp_path),
+            "--fail-on", "never",
+        ])
+    assert rc == 0
+    assert captured["http_timeout"] == 20
+
+
+def test_posture_http_timeout_override_flows_through(monkeypatch, tmp_path: Path):
+    """`--http-timeout 45` overrides the default and reaches `audit()`."""
+    captured: dict[str, object] = {}
+
+    def fake_audit(**kwargs):
+        captured.update(kwargs)
+        from scan_kit import posture as posture_mod_real
+        return posture_mod_real.AuditResult(findings=())
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(cli_mod.posture_mod, "audit", fake_audit)
+    out = io.StringIO()
+    err = io.StringIO()
+    with redirect_stderr(err), redirect_stdout(out):
+        rc = cli_mod.main([
+            "posture",
+            "--owner", "o", "--repo", "r",
+            "--root", str(tmp_path),
+            "--fail-on", "never",
+            "--http-timeout", "45",
+        ])
+    assert rc == 0
+    assert captured["http_timeout"] == 45
+
+
 # ---------------------------------------------------------------------------
 # sarif merge
 # ---------------------------------------------------------------------------

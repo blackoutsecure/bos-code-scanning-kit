@@ -82,6 +82,15 @@ class WorkflowsPosture:
     # findings without breaking pipelines on day one; opt up to `"fail"`.
     require_pinned_actions: str = "warn"
     allow_tag_pin: tuple[str, ...] = ()
+    # PS013 — Microsoft Security DevOps detection. Optional companion
+    # probe: when `microsoft/security-devops-action` is wired into any
+    # workflow, emit a `pass` row per occurrence with the pinned ref +
+    # line so the audit captures it as part of the security posture.
+    # When MSDO is absent, emit a single row at this severity. Defaults
+    # to `"skip"` (purely informational — absent MSDO is not a finding,
+    # the row only shows up in the skips JSON sidecar). Flip to
+    # `"warn"` or `"fail"` to require MSDO across the org.
+    detect_msdo: str = "skip"
 
 
 @dataclass(frozen=True)
@@ -245,6 +254,7 @@ def _posture_from_dict(d: dict[str, Any]) -> PostureConfig:
         forbid_write_all=_severity(wf_d, "forbid_write_all", "warn"),
         require_pinned_actions=_severity(wf_d, "require_pinned_actions", "warn"),
         allow_tag_pin=_str_tuple(wf_d, "allow_tag_pin"),
+        detect_msdo=_severity(wf_d, "detect_msdo", "skip"),
     )
 
     branches_d = _dict(d, "branches")
