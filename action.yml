@@ -97,6 +97,19 @@ inputs:
     required: false
     default: 'fail'
 
+  # ----- Tuning -----
+  http_timeout:
+    description: >-
+      Per-request HTTP timeout (seconds) for the posture audit's GitHub
+      REST calls. Default `20`. Each probe is independent, so the
+      practical upper bound on a posture run is roughly
+      `http_timeout` * number-of-probes (~10 on a baseline scan).
+      Bump on self-hosted runners with slow egress, or to ride out
+      brief GitHub API latency spikes that otherwise surface as
+      `PS*** error: HTTP 502` rows. Bare integer string; no unit.
+    required: false
+    default: '20'
+
   # ----- Output -----
   sarif_output:
     description: 'Path for the merged SARIF artefact.'
@@ -157,6 +170,7 @@ runs:
         GH_CFG:   ${{ inputs.config }}
         GH_TOKEN: ${{ inputs.github_token || github.token }}
         FAIL_ON:  ${{ inputs.fail_on }}
+        HTTP_TIMEOUT: ${{ inputs.http_timeout }}
       run: |
         set -euo pipefail
         cfg_flag=()
@@ -171,7 +185,9 @@ runs:
           --token  "${GH_TOKEN}" \
           --root   "${GITHUB_WORKSPACE}" \
           --sarif  "${GITHUB_WORKSPACE}/bos-scan-posture.sarif" \
+          --skips-json "${GITHUB_WORKSPACE}/bos-scan-posture-skips.json" \
           --fail-on "${FAIL_ON}" \
+          --http-timeout "${HTTP_TIMEOUT}" \
           "${cfg_flag[@]}"
         ec=$?
         set -e
@@ -455,6 +471,18 @@ runs:
                     else:                 n += 1
             return (e, w, n)
 
+        # Posture skips sidecar — SARIF drops `skip` findings (rightly,
+        # they're not actionable in the Security tab), so without this
+        # file the consolidated summary cannot tell that probes ran in
+        # indeterminate mode. Each entry: {rule_id, message, location}.
+        skips = []
+        skips_path = pathlib.Path("bos-scan-posture-skips.json")
+        if skips_path.exists() and skips_path.stat().st_size > 0:
+            try:
+                skips = json.loads(skips_path.read_text()).get("skips", []) or []
+            except Exception:
+                skips = []
+
         rows = []
         any_err = any_find = False
         for label, name, enabled in scanners:
@@ -477,12 +505,23 @@ runs:
             elif w + n:
                 rows.append((label, "warn", f"{w} warn / {n} note"))
                 any_find = True
+            elif label == "Posture audit" and skips:
+                # Posture ran cleanly on the rules it could evaluate,
+                # but one or more probes were skipped (typically a
+                # token-scope limit). Surface as `incomplete` rather
+                # than `success` so the verdict line stays honest.
+                rows.append((label, "incomplete",
+                             f"{len(skips)} probe(s) indeterminate — see below"))
             else:
                 rows.append((label, "success", "no findings"))
 
-        if   any_err:  outcome = "failure"
-        elif any_find: outcome = "warn"
-        else:          outcome = "success"
+        # Outcome rollup. Skips never produce errors, but they DO
+        # demote a would-be `success` to `warn` so the top-line badge
+        # doesn't lie. They never override an existing `failure`/`warn`.
+        if   any_err:           outcome = "failure"
+        elif any_find:          outcome = "warn"
+        elif skips:             outcome = "warn"
+        else:                   outcome = "success"
 
         badge = {"success": "success", "warn": "warn", "failure": "failure"}[outcome]
         fail_on = os.environ.get("FAIL_ON", "fail")
@@ -492,8 +531,12 @@ runs:
                        "on the launchpad (run scan but do not gate release).")
         elif outcome == "failure":
             verdict = "Error-level findings present, but `fail_on: never` — pipeline continues."
-        elif outcome == "warn":
+        elif outcome == "warn" and any_find:
             verdict = "Non-blocking findings present — pipeline continues."
+        elif outcome == "warn" and skips:
+            verdict = (f"No findings, but {len(skips)} probe(s) could not be "
+                       "evaluated (see 'Indeterminate / skipped probes' below). "
+                       "Provide an elevated PAT to upgrade them to pass/fail.")
         else:
             verdict = "No findings detected."
 
@@ -502,10 +545,11 @@ runs:
         # GitHub Actions renders ANSI sequences verbatim, so colour the
         # outcome badge and per-stage result for at-a-glance triage.
         sev_color = {
-            "success":  "\033[32m",     # green
-            "warn":     "\033[33m",     # yellow
-            "failure":  "\033[31;1m",   # bold red
-            "skipped":  "\033[90m",     # grey
+            "success":    "\033[32m",     # green
+            "warn":       "\033[33m",     # yellow
+            "failure":    "\033[31;1m",   # bold red
+            "skipped":    "\033[90m",     # grey  — stage disabled / no SARIF
+            "incomplete": "\033[33m",     # yellow — ran but indeterminate probes
         }
         reset = "\033[0m"
         bold  = "\033[1m"
@@ -518,6 +562,14 @@ runs:
             colour = sev_color.get(res, "")
             print(f"  {label.ljust(label_w)}  "
                   f"{colour}{res.ljust(res_w)}{reset}  {detail}")
+        if skips:
+            print()
+            print(f"  {bold}indeterminate probes{reset} "
+                  f"({len(skips)} — token-scope limitations):")
+            for s in skips:
+                rid = s.get("rule_id", "?")
+                msg = s.get("message", "")
+                print(f"    • {rid}: {msg}")
         print(f"  {bold}verdict{reset}: {verdict}")
         print()
 
@@ -530,6 +582,32 @@ runs:
                 for label, result, detail in rows:
                     fh.write(f"| {label} | {result} | {detail} |\n")
                 fh.write(f"\n**Outcome:** `{outcome}` — {verdict}\n")
+
+                if skips:
+                    fh.write("\n### Indeterminate / skipped probes\n\n")
+                    fh.write(
+                        "These checks ran but could not reach a `pass` or "
+                        "`fail` verdict — typically the GitHub token lacks "
+                        "the scope to query an admin-gated endpoint. They "
+                        "are shown here (not as failures) so reviewers know "
+                        "what was *not* audited.\n\n"
+                    )
+                    fh.write("| Rule | Reason | Location |\n")
+                    fh.write("|---|---|---|\n")
+                    for s in skips:
+                        rid = s.get("rule_id", "?")
+                        msg = (s.get("message") or "").replace("|", "\\|")
+                        loc = (s.get("location") or "—").replace("|", "\\|")
+                        fh.write(f"| `{rid}` | {msg} | {loc} |\n")
+                    fh.write(
+                        "\n_To upgrade these to real pass/fail rows, "
+                        "configure `SCANNING_PAT` (classic `repo`, or "
+                        "fine-grained with Administration + Security "
+                        "events + Metadata read) and pass it via the "
+                        "`github_token:` input. See the kit README § "
+                        "'SCANNING_PAT — advanced posture credentials'._\n"
+                    )
+
                 if os.environ.get("ENABLE_UPLOAD") == "true" and os.environ.get("SARIF_PATH"):
                     fh.write("\nMerged SARIF uploaded to the repo Security tab "
                              "under category `bos-code-scanning-kit`.\n")

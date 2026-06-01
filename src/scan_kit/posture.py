@@ -201,6 +201,27 @@ PERMISSIONS_BLOCK = re.compile(r"^permissions\s*:", re.MULTILINE)
 WRITE_ALL = re.compile(r"^\s*permissions\s*:\s*write-all\s*$", re.MULTILINE)
 JOB_WRITE_ALL = re.compile(r"^\s{2,}permissions\s*:\s*write-all\s*$", re.MULTILINE)
 
+# PS012 — captures the `uses:` value (group 1) along with its line number
+# via re.finditer offsets. Tolerates the YAML list form (`- uses: ...`)
+# and the bare mapping form (`uses: ...`); strips an optional trailing
+# inline `# ...` comment and surrounding quotes inside the function so
+# the regex itself stays simple.
+USES_LINE = re.compile(
+    r"^[ \t]*-?[ \t]*uses:[ \t]*(?P<ref>[^\r\n]+?)[ \t]*(?:#.*)?$",
+    re.MULTILINE,
+)
+SHA_40 = re.compile(r"^[0-9a-f]{40}$")
+
+# PS013 — detect `uses:` references to Microsoft Security DevOps
+# (`microsoft/security-devops-action`). Matches any pinning (SHA, tag,
+# branch) so the probe sees MSDO whether it's pinned by SHA (preferred)
+# or by tag. Owner/repo match only; the @ref is captured inside the
+# message for the audit row's `details`.
+MSDO_USES = re.compile(
+    r"^[ \t]*-?[ \t]*uses:[ \t]*[\"']?(?P<ref>microsoft/security-devops-action(?:@[^\s\"'#]+)?)[\"']?[ \t]*(?:#.*)?$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
 
 def _scan_workflow_perms(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
     """PS010 + PS011 — workflow-permissions audit, purely from the local checkout."""
@@ -252,6 +273,169 @@ def _scan_workflow_perms(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding
 
 
 # ---------------------------------------------------------------------------
+# PS012 — pinned-actions audit (workflows + composite action manifests)
+# ---------------------------------------------------------------------------
+
+def _scan_pinned_actions(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
+    """PS012 — every third-party `uses:` ref must be pinned to a 40-char SHA.
+
+    Walks both `.github/workflows/*.y*ml` and `.github/actions/**/*.y*ml`
+    (composite action manifests). Local (`./...`, `../...`) and
+    `docker://...` refs are exempt; `cfg.allow_tag_pin` exempts trusted
+    `owner/repo` entries.
+    """
+    out: list[Finding] = []
+    if cfg.require_pinned_actions == "skip":
+        return out
+
+    targets: list[Path] = []
+    wf_dir = repo_root / ".github" / "workflows"
+    if wf_dir.is_dir():
+        targets.extend(sorted(wf_dir.glob("*.y*ml")))
+    actions_dir = repo_root / ".github" / "actions"
+    if actions_dir.is_dir():
+        targets.extend(sorted(actions_dir.rglob("*.y*ml")))
+
+    if not targets:
+        return out
+
+    allow = frozenset(cfg.allow_tag_pin)
+
+    for path in targets:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            out.append(Finding(
+                "PS012", "error",
+                f"could not read file: {exc}",
+                location=path.relative_to(repo_root).as_posix(),
+            ))
+            continue
+
+        rel = path.relative_to(repo_root).as_posix()
+        offenders: list[tuple[int, str, str]] = []  # (line, ref, reason)
+        for match in USES_LINE.finditer(text):
+            raw_ref = match.group("ref").strip().strip("\"'")
+            if not raw_ref:
+                continue
+            # Local + docker refs are out of scope for PS012.
+            if raw_ref.startswith(("./", "../", "docker://")):
+                continue
+            line_no = text.count("\n", 0, match.start()) + 1
+            if "@" not in raw_ref:
+                offenders.append((line_no, raw_ref, "missing `@<sha>` suffix"))
+                continue
+            base, _, ver = raw_ref.partition("@")
+            owner_repo = "/".join(base.split("/")[:2])
+            if owner_repo in allow:
+                continue
+            if SHA_40.match(ver):
+                continue
+            offenders.append((line_no, raw_ref, f"version `{ver}` is not a 40-char SHA"))
+
+        if not offenders:
+            out.append(Finding("PS012", "pass",
+                               "all `uses:` references pinned to 40-char SHA",
+                               location=rel))
+            continue
+        for line_no, ref, reason in offenders:
+            out.append(Finding(
+                "PS012",
+                cfg.require_pinned_actions,
+                f"L{line_no}: `{ref}` — {reason}",
+                location=rel,
+            ))
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# PS013 — Microsoft Security DevOps detection
+# ---------------------------------------------------------------------------
+
+def _scan_msdo(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
+    """PS013 — detect `microsoft/security-devops-action` usage in workflows.
+
+    Best-effort, local-only static probe. The MSDO action is a meta-
+    runner bundling Microsoft's OSS analyzers (Bandit / BinSkim / Trivy /
+    Terrascan / Template-Analyzer / ESLint). We report it as part of the
+    security posture so audits capture coverage even when those analyzers
+    are not driven by the kit itself.
+
+    Severity matrix (cfg.detect_msdo):
+        skip (default) — absent MSDO drops out of SARIF (skips sidecar
+                         only); present MSDO still records a `pass` row.
+                         Matches the "if installed gather details, else
+                         ignore" contract.
+        warn / fail    — absent MSDO raises a finding at that severity
+                         to push adoption org-wide.
+    """
+    out: list[Finding] = []
+    wf_dir = repo_root / ".github" / "workflows"
+    if not wf_dir.is_dir():
+        # No workflows at all — nothing to scan, but still surface the
+        # absence under the configured severity (default skip).
+        out.append(Finding(
+            "PS013", cfg.detect_msdo,
+            "Microsoft Security DevOps not detected — no `.github/workflows/` directory",
+        ))
+        return out
+
+    workflows = sorted(wf_dir.glob("*.y*ml"))
+    if not workflows:
+        out.append(Finding(
+            "PS013", cfg.detect_msdo,
+            "Microsoft Security DevOps not detected — no workflow files present",
+        ))
+        return out
+
+    found_any = False
+    for wf in workflows:
+        try:
+            text = wf.read_text(encoding="utf-8")
+        except OSError as exc:
+            out.append(Finding(
+                "PS013", "error",
+                f"could not read workflow: {exc}",
+                location=wf.relative_to(repo_root).as_posix(),
+            ))
+            continue
+
+        rel = wf.relative_to(repo_root).as_posix()
+        for match in MSDO_USES.finditer(text):
+            found_any = True
+            ref = match.group("ref").strip()
+            line_no = text.count("\n", 0, match.start()) + 1
+            # Detail: capture pinning quality so the audit row tells the
+            # operator whether this MSDO usage also meets PS012 hygiene.
+            _, _, ver = ref.partition("@")
+            if not ver:
+                pin_note = "unpinned (no `@ref`)"
+            elif SHA_40.match(ver):
+                pin_note = f"SHA-pinned (`{ver[:7]}…`)"
+            else:
+                pin_note = f"tag/branch-pinned (`{ver}`)"
+            out.append(Finding(
+                "PS013", "pass",
+                f"L{line_no}: MSDO detected — {ref} ({pin_note})",
+                location=rel,
+            ))
+
+    if not found_any:
+        # No MSDO call site found — emit the configured-severity row.
+        # Default `skip` keeps the row out of SARIF but surfaces it in
+        # the `--skips-json` sidecar so operators still see the gap.
+        out.append(Finding(
+            "PS013", cfg.detect_msdo,
+            "Microsoft Security DevOps action (`microsoft/security-devops-action`) "
+            "not detected in any workflow — consider adding it for OSS analyzer "
+            "coverage (Bandit / BinSkim / Trivy / Terrascan / Template-Analyzer / ESLint).",
+        ))
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Audit entry points
 # ---------------------------------------------------------------------------
 
@@ -262,18 +446,28 @@ def audit(
     repo: str,
     token: str,
     repo_root: Path,
+    http_timeout: int = 20,
 ) -> AuditResult:
-    """Run the full posture audit. Returns a single `AuditResult`."""
+    """Run the full posture audit. Returns a single `AuditResult`.
+
+    `http_timeout` is the per-request urlopen timeout (seconds) handed to
+    the `GitHub` REST client. Each probe is independent, so the practical
+    upper bound on a posture run is roughly `http_timeout` * number-of-
+    probes; on a baseline run that's ~10 calls. Tune via the composite
+    action's `http_timeout` input or the CLI's `--http-timeout` flag.
+    """
     findings: list[Finding] = []
 
     # Local-only checks (no API needed) — always run first so the
     # operator gets something even when the token is wrong.
     findings.extend(_scan_workflow_perms(repo_root, cfg.posture.workflows))
+    findings.extend(_scan_pinned_actions(repo_root, cfg.posture.workflows))
+    findings.extend(_scan_msdo(repo_root, cfg.posture.workflows))
     findings.extend(_scan_codeowners_local(repo_root, cfg.posture.codeowners))
 
     # API-driven checks
     try:
-        gh = GitHub(token)
+        gh = GitHub(token, timeout=http_timeout)
     except GitHubError as exc:
         findings.append(Finding("PS000", "error", str(exc)))
         return AuditResult(findings=tuple(findings))
@@ -289,8 +483,64 @@ def audit(
 # PS001-003 — GHAS toggles
 # ---------------------------------------------------------------------------
 
+def _ghas_entitlement(body: Any, status: int) -> str:
+    # Classify whether GitHub Advanced Security is provably enabled for the
+    # repo. Returns one of:
+    #   "entitled"     — GHAS features (code scanning, secret scanning,
+    #                    push protection) are available; run the probes.
+    #   "not_entitled" — Provably off (private/internal repo whose
+    #                    `security_and_analysis.advanced_security.status`
+    #                    is `"disabled"`). Skip GHAS probes cleanly so we
+    #                    don't warn about a toggle the operator literally
+    #                    cannot flip without buying the SKU.
+    #   "unknown"      — Token can't see the field, repo metadata
+    #                    forbidden, etc. Fall through to each probe's
+    #                    own 403/404 handling.
+    if status != 200 or not isinstance(body, dict):
+        return "unknown"
+    # Public repos: GHAS code/secret scanning is free. Push protection on
+    # public repos is also free (GHAS-for-public-repos covers all three).
+    if body.get("visibility") == "public" or body.get("private") is False:
+        return "entitled"
+    sa = body.get("security_and_analysis")
+    if not isinstance(sa, dict):
+        return "unknown"
+    adv = sa.get("advanced_security")
+    if not isinstance(adv, dict):
+        return "unknown"
+    adv_status = adv.get("status")
+    if adv_status == "enabled":
+        return "entitled"
+    if adv_status == "disabled":
+        return "not_entitled"
+    return "unknown"
+
+
+_GHAS_NOT_ENTITLED_HINT = (
+    "GitHub Advanced Security is not enabled for this private repository "
+    "— Settings → Code security → GitHub Advanced Security → Enable "
+    "(requires the GHAS SKU). Skipping to avoid a false-negative warning."
+)
+
+
 def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Finding]:
     out: list[Finding] = []
+
+    # Single repo-metadata fetch up front: powers the entitlement gate for
+    # PS001/PS002/PS004 AND is reused by PS004's push-protection probe so
+    # we never hit `/repos/{owner}/{repo}` twice. PS003 (Dependabot) is
+    # GHAS-independent and never consults this — vulnerability alerts are
+    # free on every plan tier.
+    needs_repo_body = (
+        cfg.require_code_scanning != "skip"
+        or cfg.require_secret_scanning != "skip"
+        or cfg.require_push_protection != "skip"
+    )
+    repo_body: Any = None
+    repo_status: int = 0
+    if needs_repo_body:
+        repo_body, repo_status = gh.get_or_none(f"/repos/{owner}/{repo}")
+    entitlement = _ghas_entitlement(repo_body, repo_status)
 
     # PS001 — code scanning enabled (Default OR Advanced setup).
     #
@@ -303,62 +553,92 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
     # fallback below this rule fires a false-negative warn for every
     # caller using Advanced (incl. this kit itself).
     if cfg.require_code_scanning != "skip":
-        body, status = gh.get_or_none(f"/repos/{owner}/{repo}/code-scanning/default-setup")
-        if status == 200 and isinstance(body, dict) and body.get("state") == "configured":
+        if entitlement == "not_entitled":
             out.append(Finding(
-                "PS001", "pass",
-                "GHAS code scanning enabled — Default setup (recommended, managed by GitHub)",
+                "PS001", "skip",
+                f"GHAS code scanning unavailable — {_GHAS_NOT_ENTITLED_HINT}",
             ))
-        elif status == 403:
-            # Not an error — the default `GITHUB_TOKEN` lacks the scope to
-            # query this endpoint. Surface as `skip` so the row is honest
-            # ("we did not check") rather than alarming, and stays out of
-            # the SARIF upload entirely. Grant a PAT with `repo` via the
-            # `github_token` input to upgrade to a real pass/fail check.
-            out.append(Finding("PS001", "skip",
-                               "code scanning probe forbidden — token needs `repo` (provide a PAT to check)"))
         else:
-            # Default-setup is off — fall back to checking whether an
-            # Advanced workflow has uploaded any CodeQL analyses for the
-            # repo. A single 200 with non-empty array means CodeQL is
-            # actively scanning via Advanced and the row should `pass`.
-            # The analyses endpoint needs `security_events: read`, which
-            # the default `GITHUB_TOKEN` does grant — no scope escalation
-            # over the default-setup probe.
-            adv_body, adv_status = gh.get_or_none(
-                f"/repos/{owner}/{repo}/code-scanning/analyses?tool_name=CodeQL&per_page=1",
-            )
-            if adv_status == 200 and isinstance(adv_body, list) and len(adv_body) > 0:
+            body, status = gh.get_or_none(f"/repos/{owner}/{repo}/code-scanning/default-setup")
+            if status == 200 and isinstance(body, dict) and body.get("state") == "configured":
                 out.append(Finding(
                     "PS001", "pass",
-                    "GHAS code scanning enabled — Advanced setup (caller-owned CodeQL workflow uploading analyses)",
+                    "GHAS code scanning enabled — Default setup (recommended, managed by GitHub)",
                 ))
             else:
-                out.append(Finding(
-                    "PS001", cfg.require_code_scanning,
-                    "GHAS code scanning is not enabled — Settings → Code security → Code scanning → Set up (Default, recommended), "
-                    "OR commit a workflow that calls `github/codeql-action/analyze` (Advanced)",
-                ))
+                # Try the Advanced-setup fallback unconditionally — the
+                # `code-scanning/analyses` endpoint only needs
+                # `security_events: read`, which the default `GITHUB_TOKEN`
+                # DOES grant (no scope escalation over the default-setup
+                # probe). A 200 + non-empty array means CodeQL is actively
+                # scanning via a caller-owned workflow, so we can report
+                # `pass` even when the default-setup probe was forbidden
+                # (403) — the previous code dropped straight to `skip` on
+                # the 403 path and hid that meaningful result on baseline-
+                # token runs.
+                adv_body, adv_status = gh.get_or_none(
+                    f"/repos/{owner}/{repo}/code-scanning/analyses?tool_name=CodeQL&per_page=1",
+                )
+                adv_active = (
+                    adv_status == 200
+                    and isinstance(adv_body, list)
+                    and len(adv_body) > 0
+                )
+
+                if adv_active:
+                    out.append(Finding(
+                        "PS001", "pass",
+                        "GHAS code scanning enabled — Advanced setup (caller-owned CodeQL workflow uploading analyses)",
+                    ))
+                elif status == 403:
+                    # Default-setup endpoint forbidden AND no Advanced
+                    # analyses visible — could be Default-setup we can't
+                    # see, or Advanced not-yet-scanned, or genuinely off.
+                    # `skip` keeps the row honest ("we did not determine
+                    # state") instead of false-warning. Grant a PAT with
+                    # `repo` via the `github_token` input to upgrade to a
+                    # real pass/fail check.
+                    out.append(Finding(
+                        "PS001", "skip",
+                        "code scanning probe forbidden — token cannot see Default setup state and no Advanced (CodeQL) analyses found via fallback (provide a PAT to differentiate)",
+                    ))
+                else:
+                    # Default-setup reachable and reports not-configured,
+                    # and no Advanced analyses either — genuinely off.
+                    out.append(Finding(
+                        "PS001", cfg.require_code_scanning,
+                        "GHAS code scanning is not enabled — Settings → Code security → Code scanning → Set up (Default, recommended), "
+                        "OR commit a workflow that calls `github/codeql-action/analyze` (Advanced)",
+                    ))
 
     # PS002 — secret scanning enabled (probe by listing alerts; 404 = disabled)
     if cfg.require_secret_scanning != "skip":
-        _body, status = gh.get_or_none(f"/repos/{owner}/{repo}/secret-scanning/alerts?per_page=1")
-        if status == 200:
-            out.append(Finding("PS002", "pass", "GHAS secret scanning is enabled"))
-        elif status == 404:
+        if entitlement == "not_entitled":
             out.append(Finding(
-                "PS002", cfg.require_secret_scanning,
-                "GHAS secret scanning is not enabled — Settings → Code security → Secret scanning → Enable",
+                "PS002", "skip",
+                f"GHAS secret scanning unavailable — {_GHAS_NOT_ENTITLED_HINT}",
             ))
-        elif status == 403:
-            # Token-scope limitation — see PS001 comment above.
-            out.append(Finding("PS002", "skip",
-                               "secret scanning probe forbidden — token needs `admin:org` or repo admin (provide a PAT to check)"))
         else:
-            out.append(Finding("PS002", "error",
-                               f"secret scanning probe returned unexpected status {status}"))
+            _body, status = gh.get_or_none(f"/repos/{owner}/{repo}/secret-scanning/alerts?per_page=1")
+            if status == 200:
+                out.append(Finding("PS002", "pass", "GHAS secret scanning is enabled"))
+            elif status == 404:
+                out.append(Finding(
+                    "PS002", cfg.require_secret_scanning,
+                    "GHAS secret scanning is not enabled — Settings → Code security → Secret scanning → Enable",
+                ))
+            elif status == 403:
+                # Token-scope limitation — see PS001 comment above.
+                out.append(Finding("PS002", "skip",
+                                   "secret scanning probe forbidden — token needs `admin:org` or repo admin (provide a PAT to check)"))
+            else:
+                out.append(Finding("PS002", "error",
+                                   f"secret scanning probe returned unexpected status {status}"))
 
     # PS003 — Dependabot vulnerability alerts enabled.
+    # NOT gated on GHAS entitlement: Dependabot alerts are free on every
+    # plan tier (public, private, internal) and do not require the GHAS
+    # SKU. This probe runs even when PS001/PS002/PS004 skip.
     if cfg.require_dependabot_alerts != "skip":
         _body, status = gh.get_or_none(
             f"/repos/{owner}/{repo}/vulnerability-alerts",
@@ -382,14 +662,19 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
     # PS004 — secret-scanning push protection enabled. Independent from PS002:
     # base scanning catches secrets already in history; push protection refuses
     # the push before the secret lands. They toggle separately in the UI and
-    # warrant separate audit rows. Probed via `security_and_analysis` on the
-    # repo object — that field is admin-only, so non-admin tokens get a 200
+    # warrant separate audit rows. Reuses the top-of-function `/repos/{owner}/{repo}`
+    # fetch (stored in `repo_body`/`repo_status`) to avoid a second round trip.
+    # `security_and_analysis` is admin-only, so non-admin tokens get a 200
     # with the field stripped silently. Treat the missing-field case as `skip`
     # (we couldn't see it) rather than `warn` (it's off).
     if cfg.require_push_protection != "skip":
-        body, status = gh.get_or_none(f"/repos/{owner}/{repo}")
-        if status == 200 and isinstance(body, dict):
-            sa = body.get("security_and_analysis")
+        if entitlement == "not_entitled":
+            out.append(Finding(
+                "PS004", "skip",
+                f"GHAS secret-scanning push protection unavailable — {_GHAS_NOT_ENTITLED_HINT}",
+            ))
+        elif repo_status == 200 and isinstance(repo_body, dict):
+            sa = repo_body.get("security_and_analysis")
             if not isinstance(sa, dict) or "secret_scanning_push_protection" not in sa:
                 out.append(Finding(
                     "PS004", "skip",
@@ -408,7 +693,7 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
                         "secret-scanning push protection is not enabled — "
                         "Settings → Code security → Secret scanning → Push protection → Enable",
                     ))
-        elif status == 403:
+        elif repo_status == 403:
             out.append(Finding(
                 "PS004", "skip",
                 "push-protection probe forbidden — token needs `repo` (admin) (provide a PAT to check)",
@@ -416,7 +701,7 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
         else:
             out.append(Finding(
                 "PS004", "error",
-                f"push-protection probe returned unexpected status {status}",
+                f"push-protection probe returned unexpected status {repo_status}",
             ))
 
     return out

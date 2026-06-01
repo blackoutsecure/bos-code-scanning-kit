@@ -80,9 +80,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="If set, write a SARIF file with the posture findings.",
     )
     p_pos.add_argument(
+        "--skips-json", default="",
+        help="If set, write a JSON sidecar listing every `skip` finding "
+             "(rule_id, message, location) so callers can surface "
+             "indeterminate probes — these are dropped from SARIF.",
+    )
+    p_pos.add_argument(
         "--fail-on", choices=("never", "fail"),
         default="fail",
         help="`fail` (default) exits non-zero on any FAIL finding; `never` always exits 0.",
+    )
+    p_pos.add_argument(
+        "--http-timeout", type=int, default=20, metavar="SECONDS",
+        help="Per-request HTTP timeout for GitHub REST calls (default: 20s). "
+             "Bump on self-hosted runners with slow egress, or when the GH "
+             "API is under load. Applies to every probe in the audit; the "
+             "audit itself has no overall wall clock.",
     )
 
     # sarif merge
@@ -180,6 +193,7 @@ def cmd_posture(args: argparse.Namespace) -> int:
             repo=args.repo,
             token=token,
             repo_root=root,
+            http_timeout=args.http_timeout,
         )
     except posture_mod.GitHubError as exc:
         sys.stderr.write(f"error: {exc}\n")
@@ -192,6 +206,31 @@ def cmd_posture(args: argparse.Namespace) -> int:
         log = sarif_mod.merge({"runs": [run]})
         sarif_mod.dump(log, Path(args.sarif))
         sys.stderr.write(f"wrote posture SARIF: {args.sarif}\n")
+
+    if args.skips_json:
+        # Sidecar for the consolidated step summary. SARIF intentionally
+        # drops `skip` results (they would clutter the Security tab),
+        # so the outer composite has no other way to learn that probes
+        # ran in indeterminate mode.
+        skip_payload = {
+            "skips": [
+                {
+                    "rule_id": f.rule_id,
+                    "message": f.message,
+                    "location": f.location or "",
+                }
+                for f in result.findings
+                if f.severity == "skip"
+            ],
+        }
+        Path(args.skips_json).write_text(
+            json.dumps(skip_payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        sys.stderr.write(
+            f"wrote posture skips JSON: {args.skips_json} "
+            f"({len(skip_payload['skips'])} skip(s))\n"
+        )
 
     _write_step_summary(result)
 

@@ -132,6 +132,7 @@ the `commit` field of the GitHub Release JSON.
 | `enable_scanners` | `true` | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck). |
 | `enable_upload` | `true` | `true` to upload the merged SARIF to GitHub Advanced Security. |
 | `fail_on` | `fail` | `fail` (default) — exit non-zero if posture has any FAIL findings or any scanner reports a result. `never` — collect findings but always exit 0 (useful for first-time rollouts). |
+| `http_timeout` | `20` | Per-request HTTP timeout (seconds) for the posture audit's GitHub REST calls. Default `20`. Each probe is independent, so the practical upper bound on a posture run is roughly `http_timeout` * number-of-probes (~10 on a baseline scan). Bump on self-hosted runners with slow egress, or to ride out brief GitHub API latency spikes that otherwise surface as `PS*** error: HTTP 502` rows. Bare integer string; no unit. |
 | `sarif_output` | `bos-scan.sarif` | Path for the merged SARIF artefact. |
 <!-- END action-inputs -->
 
@@ -284,6 +285,7 @@ Severities can be overridden per rule in `.bos-scan.yml`.
 | PS004 | warn    | Secret-scanning **push protection** is enabled (refuses pushes that contain detected secrets; toggles independently of PS002). |
 | PS010 | warn    | Every workflow file declares an explicit top-level `permissions:` block.                                |
 | PS011 | warn    | No workflow uses `permissions: write-all` at the workflow or job level.                                 |
+| PS012 | warn    | Every third-party `uses:` reference (in `.github/workflows/` and `.github/actions/`) is pinned to a 40-char commit SHA. Local (`./`) and `docker://` refs are exempt; trusted `owner/repo` entries can be added to `allow_tag_pin`. |
 | PS020 | warn    | The branch has _some_ branch-protection rule configured.                                                |
 | PS021 | warn    | The branch requires at least N approving reviews (per-branch override).                                 |
 | PS022 | warn    | The branch restricts force pushes (`allow_force_pushes.enabled = false`).                               |
@@ -365,6 +367,8 @@ posture:
   workflows:
     require_permissions_block: warn
     forbid_write_all:          warn
+    require_pinned_actions:    warn   # PS012 — fail | warn | skip
+    allow_tag_pin: []                 # owner/repo entries exempted from PS012 (e.g. ['actions/checkout'])
 
   branches:
     main:
