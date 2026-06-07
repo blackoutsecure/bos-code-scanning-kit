@@ -426,7 +426,7 @@ This repo follows the Blackout Secure Marketplace Action dev/main
 split (see [bos-automation-hub]):
 
 - **`dev`** — active development branch. Hosts the launchpad workflow
-  (`.github/workflows/bos-launchpad-marketplace.yml`). All PRs land
+  (`.github/workflows/bos-universal-launchpad.yml`). All PRs land
   here first; CI runs on every PR + every push.
 - **`main`** — the curated Marketplace artefact. Receives allowlist
   promotes from `dev` via the hub-side release pipeline. **No workflow
