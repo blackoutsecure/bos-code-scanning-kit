@@ -150,130 +150,33 @@ the `commit` field of the GitHub Release JSON.
 | `outcome` | Severity-tier verdict for the run: `success` (no findings at any level), `warn` (only warning/note-level findings — nothing the enforcement policy would block on), or `failure` (at least one error-level finding from the posture audit or any scanner). Reflects severity only — it does NOT change based on `fail_on`, so callers can gate pipelines on the verdict independently of whether the kit step itself exited non-zero. |
 <!-- END action-outputs -->
 
-## � `SCANNING_PAT` — advanced posture credentials
+## SCANNING_PAT guidance
 
-The composite's `github_token` input accepts EITHER the default
-`secrets.GITHUB_TOKEN` (the workflow's per-job token, App `15368`,
-`github-actions[bot]`) OR a Personal Access Token stored as a repo /
-org secret — by org convention named `SCANNING_PAT`. The default
-token is enough for the code-scanning probe (`PS001`) but cannot read
-the secret-scanning, Dependabot, or branch-protection endpoints —
-those return HTTP `403`, and the posture step records them as `skip`
-(not `pass` or `fail`) so the row is honest about what was checked.
+The posture audit can run with either:
 
-### TL;DR
+- `secrets.GITHUB_TOKEN` (baseline visibility)
+- `secrets.SCANNING_PAT` (recommended for full posture coverage)
 
-| Question | Answer |
-|---|---|
-| **Which token does the action prefer?** | Whichever the caller passes — the action sees one `github_token` input. The recommended caller pattern always prefers `SCANNING_PAT` over `GITHUB_TOKEN`: `github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}`. The expression is safe to ship before the PAT exists; when the secret is unset the `\|\|` falls through to `GITHUB_TOKEN`. |
-| **What classic-PAT scope do I need?** | Just the top-level `repo` checkbox. Nothing else. That's the only classic scope that simultaneously grants admin-read on `vulnerability-alerts` and `branches/*/protection`, and it auto-selects `security_events` (which is what makes PS001/PS002 work). |
-| **What does a `warn` finding mean vs a `skip` finding?** | `warn` = the feature really isn't enabled on the repo (e.g. GHAS code scanning is off). `skip` = your token couldn't see the endpoint (403). If you see `skip` rows, fix the token. If you see `warn` rows for PS001/PS002, enable the corresponding GHAS feature in **Settings → Code security**. |
-| **SAML SSO?** | Mandatory for any SAML-enforced org (incl. `blackoutsecure`). After creating the PAT, click **Configure SSO → Authorize** next to it for every org it will probe. Without this, every API call returns 403 and PS001-PS025 all degrade to `skip`. |
+Recommended caller pattern:
 
-To upgrade `skip` rows to real `pass`/`fail` evaluations, set
-`SCANNING_PAT` and pass it to the action's `github_token` input. The
-caller workflow shipped with `marketplace-kit generate-policy
-code-scan-workflow` already does this automatically when the secret
-is present; see the [bos-marketplace-kit README](https://github.com/blackoutsecure/bos-marketplace-kit#step-5b--tokens-secrets-and-variables)
-for the consumer-side wiring.
+```yaml
+with:
+  github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}
+```
 
-### Endpoints the posture audit hits (and what scope each needs)
+With only `GITHUB_TOKEN`, rules that require admin-level visibility
+(for example branch protection and some security settings) may emit
+`skip` findings. Using `SCANNING_PAT` upgrades those to real
+`pass`/`warn`/`fail` evaluations.
 
-| Rule | Endpoint | Fine-grained permission | Classic scope |
-|------|----------|-------------------------|---------------|
-| `PS001` | `GET /repos/{}/code-scanning/default-setup`, fallback `GET /repos/{}/code-scanning/analyses?tool_name=CodeQL` | Code scanning alerts: Read | `security_events` or `repo` |
-| `PS002` | `GET /repos/{}/secret-scanning/alerts` | Secret scanning alerts: Read | `security_events` or `repo` |
-| `PS003` | `GET /repos/{}/vulnerability-alerts` | Administration: Read | `repo` (admin) |
-| `PS004` | `GET /repos/{}` (reads `security_and_analysis.secret_scanning_push_protection`) | Administration: Read | `repo` (admin) |
-| `PS020`-`PS025` | `GET /repos/{}/branches/{}/protection` | Administration: Read | `repo` (admin) |
-| `PS030`-`PS031` | `GET /repos/{}/contents/CODEOWNERS` | Contents: Read | `repo` or `public_repo` |
-| `CQ*`, `GH*`, `MS*`, `SR*` | (workflow file reads via `contents`) | Contents: Read | `repo` or `public_repo` |
+Minimum PAT guidance:
 
-Branch protection and `vulnerability-alerts` REQUIRE admin-level access
-on the repo, and there is no classic-PAT scope below `repo` that grants
-it. The same constraint applies to the fine-grained permission
-(`Administration: Read`).
+- Fine-grained PAT (preferred): grant read access only to the selected
+  repositories and security/admin metadata needed by posture checks.
+- Classic PAT (fallback): `repo` scope.
+- Store as an Actions secret named `SCANNING_PAT`.
 
-### Classic PAT recipe (minimum)
-
-Created at <https://github.com/settings/tokens> → **Generate new
-token (classic)**. The kit supports classic PATs because some org
-policies disable fine-grained tokens by default. Use the minimum-scope
-recipe below — anything broader is unnecessary surface area.
-
-**One scope. That's it: tick the top-level `repo` checkbox.**
-
-Nothing else needs to be ticked manually. GitHub auto-selects the
-five sub-scopes (`repo:status`, `repo_deployment`, `public_repo`,
-`repo:invite`, `security_events`) when you tick `repo`, and that
-combined set is precisely the minimum that covers every posture probe:
-
-**Tick exactly these:**
-
-| Scope (top-level) | Tick? | Why |
-|---|---|---|
-| `repo` (Full control of private repositories) | ✅ **Yes** | The only classic scope that simultaneously grants admin read on `vulnerability-alerts` and `branches/*/protection`. Auto-selects `repo:status`, `repo_deployment`, `public_repo`, `repo:invite`, `security_events` — `security_events` is what makes PS001/PS002 work. No narrower classic scope covers the full posture surface. |
-
-**Do NOT tick (over-scoped — `SCANNING_PAT` is conceptually READ-only):**
-
-| Scope | Why not |
-|---|---|
-| `workflow` | The posture audit never writes workflow files. |
-| `write:packages`, `delete:packages`, `read:packages` | Packages are not involved. |
-| `admin:org`, `write:org`, `read:org`, `manage_runners:org` | Org admin is never required to probe a single repo. |
-| `admin:enterprise` (and children: `manage_runners`, `manage_billing`, `read`, `scim`) | Enterprise-level access is never required. |
-| `delete_repo`, `admin:repo_hook`, `admin:org_hook` | Destructive / hook scopes are not used. |
-| `admin:public_key`, `admin:ssh_signing_key`, `admin:gpg_key` | Key management is not used. |
-| `gist`, `notifications`, `user`, `audit_log`, `codespace`, `project`, `copilot`, `write:discussion`, `read:discussion` | Not used. |
-
-**SAML SSO authorize (mandatory for any SAML-enforced org, including `blackoutsecure`):**
-
-1. On the saved-token page (<https://github.com/settings/tokens>),
-   under **"Configure SSO"** next to the token, click *Authorize*
-   for every SAML-enforced org the PAT will probe.
-2. Without this, every API call against the org returns HTTP `403`
-   with body `Resource protected by organization SAML enforcement`,
-   and PS001-PS025 all degrade to `skip`.
-
-**Storage:** save under **Settings → Secrets and variables → Actions →
-Secrets** as `SCANNING_PAT` (secret, not variable — secrets are
-masked in logs). For org-wide scanning, store at the org level and
-restrict to specific repos via the org-secret access policy.
-
-**Expiration:** ≤90 days. Rotate on schedule — a leaked classic
-`repo` PAT is more dangerous than a leaked fine-grained PAT because
-it can write to every private repo the owner can see, not just the
-selected ones. Per-repo blast-radius limiting is only possible with
-fine-grained.
-
-### Fine-grained PAT recipe (recommended)
-
-If your org allows fine-grained tokens, prefer them — they let
-`SCANNING_PAT` be truly READ-only:
-
-| Setting | Value |
-|---|---|
-| Resource owner | the org being scanned |
-| Repository access | Only select repositories → the repos to probe |
-| Repository permissions → Contents | Read-only |
-| Repository permissions → Metadata | Read-only (auto-selected, mandatory) |
-| Repository permissions → Administration | Read-only |
-| Repository permissions → Code scanning alerts | Read-only |
-| Repository permissions → Secret scanning alerts | Read-only |
-| Everything else | "No access" |
-| Expiration | ≤90 days |
-| Then | **Configure SSO → Authorize** for each SAML-enforced org |
-
-### What happens with no `SCANNING_PAT`
-
-The audit still runs. PS001 (code scanning) succeeds via
-`GITHUB_TOKEN` if the workflow has `permissions: { security-events:
-read }` (or `write`). PS002, PS003, and PS020-PS025 emit `skip`
-findings with a remediation hint pointing at this section. No SARIF
-upload failure, no posture FAIL — just an honest "we did not check"
-row.
-
-## �🛡️ Posture rule reference
+## Posture rule reference
 
 Severities can be overridden per rule in `.bos-scan.yml`.
 
@@ -314,15 +217,21 @@ fresh per run; no scanner is sourced from `latest`.
 | **actionlint**     | ✅ v1.0  | `v1.7.1`  | `.github/workflows/*.{yml,yaml}` exists                      | GitHub Actions workflow YAML (syntax, expressions, embedded `run:` shell)              | `actionlint-native` |
 | **gitleaks**       | ✅ v1.0  | `v8.21.2` | Always (when `enable_scanners: true`)                        | Secrets across the working tree (API keys, tokens, private keys, etc.)                 | `gitleaks-native`   |
 | **shellcheck**     | ✅ v1.0  | `v0.10.0` | `**/*.sh` or `**/*.bash` exists                              | Shell-script issues (POSIX compliance, quoting, race conditions)                       | `SCNNNN`            |
-| **CodeQL**         | 🛠 v1.1  | _pending_ | Any detected language maps to a CodeQL target (see below)    | Semantic source-code scan via GitHub's CodeQL engine                                   | `codeql-*`          |
-| **Trivy**          | 🛠 v1.1  | _pending_ | `Dockerfile*` or `compose.{yml,yaml}` exists                 | Container image CVEs + IaC misconfigurations                                           | `trivy-*`           |
-| **Checkov**        | 🛠 v1.1  | _pending_ | `*.tf`, `k8s/` or `kubernetes/` manifests, or `Chart.yaml`   | IaC policy + misconfigurations (Terraform / Kubernetes / Helm)                         | `CKV_*`             |
-| **osv-scanner**    | 🛠 v1.1  | _pending_ | Any package-manager lockfile present (see detection below)   | Known-vulnerability cross-reference against the [OSV](https://osv.dev) database        | `osv-*`             |
-| **hadolint**       | 🛠 v1.1  | _pending_ | `Dockerfile*` exists                                         | Dockerfile linting (best practices, layer hygiene)                                     | `DL*`               |
-| **Scorecard SARIF**| 🛠 v1.1  | _pending_ | Always (when enabled)                                        | OpenSSF [Scorecard](https://github.com/ossf/scorecard) checks merged with posture      | `scorecard-*`       |
 
-`✅ v1.0` = shipping today. `🛠 v1.1` = scaffolded in the registry,
-fan-out rolling out across the v1.1.x line.
+
+### Tool inventory (v1.0)
+
+This table covers every external tool currently used by the shipped
+kit.
+
+| Tool | Purpose | License | Site |
+| ---- | ------- | ------- | ---- |
+| actionlint | Lint GitHub Actions workflow syntax, expressions, and embedded shell usage. | MIT | https://github.com/rhysd/actionlint |
+| gitleaks | Detect secrets in the repository working tree. | MIT | https://github.com/gitleaks/gitleaks |
+| ShellCheck | Analyze shell scripts for correctness, quoting, and portability issues. | GPL-3.0 | https://www.shellcheck.net |
+| PyYAML | Parse `.bos-scan.yml` and related YAML configuration data. | MIT | https://pyyaml.org |
+
+Only the tools listed above are executed by the current `action.yml`.
 
 ### Ecosystem detection coverage
 
@@ -405,9 +314,9 @@ bos-scan detect --root .
 bos-scan validate --root .
 
 # Posture audit (requires GITHUB_TOKEN)
-export GITHUB_TOKEN=ghp_…
+export GITHUB_TOKEN=<your-token>
 bos-scan posture \
-  --owner blackoutsecure \
+  --owner your-org \
   --repo  bos-code-scanning-kit \
   --root  . \
   --sarif posture.sarif
@@ -419,21 +328,6 @@ bos-scan sarif \
   --posture posture.sarif \
   --output bos-scan.sarif
 ```
-
-## 🏗️ Repository layout & releases
-
-This repo follows the Blackout Secure Marketplace Action dev/main
-split (see [bos-automation-hub]):
-
-- **`dev`** — active development branch. Hosts the launchpad workflow
-  (`.github/workflows/bos-universal-launchpad.yml`). All PRs land
-  here first; CI runs on every PR + every push.
-- **`main`** — the curated Marketplace artefact. Receives allowlist
-  promotes from `dev` via the hub-side release pipeline. **No workflow
-  files** live on `main`; the hub release stage enforces this so the
-  branch presents a clean Marketplace surface.
-
-[bos-automation-hub]: https://github.com/blackoutsecure/bos-automation-hub
 
 ## 🤝 Contributing
 
