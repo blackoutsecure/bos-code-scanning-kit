@@ -430,6 +430,52 @@ def test_ps001_pass_when_default_setup_forbidden_but_advanced_active():
     assert "Advanced" in target[0].message
 
 
+def test_finding_has_structured_metadata():
+    finding = posture_mod.Finding(
+        "PS010",
+        "warn",
+        "Workflow permissions were not declared.",
+        location=".github/workflows/ci.yml",
+        evidence={"workflow": "ci.yml"},
+    )
+    payload = finding.to_dict()
+    assert payload["rule_id"] == "PS010"
+    assert payload["severity"] == "warn"
+    assert payload["title"] == "Workflow permissions are declared"
+    assert payload["source"] == "posture"
+    assert payload["location"] == ".github/workflows/ci.yml"
+    assert payload["evidence"] == {"workflow": "ci.yml"}
+    assert payload["remediation"]
+    assert payload["remediation_confidence"] == "deterministic"
+    assert payload["remediation_source"] == "Blackout Secure Recommended Remediation"
+
+
+def test_summary_markdown_includes_summary_and_remediation_columns():
+    result = posture_mod.AuditResult(
+        findings=(
+            posture_mod.Finding(
+                "PS010",
+                "warn",
+                "Workflow permissions were not declared.",
+                location=".github/workflows/ci.yml",
+                remediation="Set a top-level permissions block for the workflow.",
+            ),
+        )
+    )
+    summary = result.summary_markdown()
+    assert "## Summary" in summary
+    assert "**Totals:**" in summary
+    assert "| Rule | Severity | Location | Title | Message | Remediation |" in summary
+    assert "Set a top-level permissions block" in summary
+
+
+def test_summary_markdown_handles_no_findings():
+    result = posture_mod.AuditResult(findings=())
+    summary = result.summary_markdown()
+    assert "## Summary" in summary
+    assert "_No findings._" in summary
+
+
 def test_ps001_skip_when_default_setup_forbidden_and_no_advanced_analyses():
     # Default-setup forbidden AND analyses comes back empty (or also
     # forbidden, or any non-200). We cannot distinguish "Default setup

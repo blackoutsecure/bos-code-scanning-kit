@@ -28,7 +28,7 @@ import re
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,71 @@ from .config import (
 
 SEVERITIES = ("pass", "fail", "warn", "skip", "error")
 
+# Rule-family display order — drives the section banners in the
+# posture table. Keys are PS-id prefixes, values are (header, blurb).
+_RULE_FAMILIES: tuple[tuple[str, str, str], ...] = (
+    ("PS00", "GHAS toggles",         "Code scanning, secret scanning, Dependabot, push protection"),
+    ("PS01", "Workflow permissions", "Per-file audit of `.github/workflows/*.yml`"),
+    ("PS02", "Branch protection",    "Required reviews, status checks, conversation resolution"),
+    ("PS03", "CODEOWNERS",           "Repo-level review routing"),
+)
+
+
+def _family_for(rule_id: str) -> int:
+    """Return the `_RULE_FAMILIES` index for a finding (-1 = uncategorised)."""
+    for i, (prefix, _, _) in enumerate(_RULE_FAMILIES):
+        if rule_id.startswith(prefix):
+            return i
+    return -1
+
+
+def _md_escape(text: str) -> str:
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
+def _default_finding_title(rule_id: str) -> str:
+    titles = {
+        "PS001": "Code scanning is enabled",
+        "PS002": "Secret scanning is enabled",
+        "PS003": "Vulnerability alerts are enabled",
+        "PS004": "Push protection is enabled",
+        "PS010": "Workflow permissions are declared",
+        "PS011": "Workflow write access is restricted",
+        "PS012": "Actions are pinned to immutable refs",
+        "PS013": "Microsoft Security DevOps is configured",
+        "PS020": "Branch protection is configured",
+        "PS021": "Required reviews are enforced",
+        "PS022": "Force pushes are restricted",
+        "PS023": "Required status checks are enforced",
+        "PS024": "Signed commits are required",
+        "PS025": "Conversation resolution is required",
+        "PS030": "CODEOWNERS file is present",
+        "PS031": "CODEOWNERS entries are valid",
+        "PS032": "CODEOWNERS team owners exist",
+        "PS033": "CODEOWNERS user owners exist",
+    }
+    return titles.get(rule_id, f"Finding {rule_id}")
+
+
+def _default_finding_remediation(rule_id: str, message: str) -> str:
+    if rule_id == "PS001":
+        return "Enable GitHub code scanning via Default setup or Advanced setup and ensure a supported CodeQL workflow is configured."
+    if rule_id == "PS002":
+        return "Turn on GitHub secret scanning for the repository and review any existing alerts that should be remediated."
+    if rule_id == "PS003":
+        return "Enable Dependabot vulnerability alerts and configure automated dependency updates for the repository."
+    if rule_id == "PS004":
+        return "Enable secret-scanning push protection in repository security settings to block secrets before they are pushed."
+    if rule_id.startswith("PS01"):
+        return "Add or tighten the workflow permission block so the job only has the minimum required GitHub token permissions."
+    if rule_id.startswith("PS012"):
+        return "Pin third-party GitHub Action references to a fully qualified commit SHA and avoid floating tags or branches."
+    if rule_id.startswith("PS02"):
+        return "Configure branch protection rules for the target branch, including required reviews and status checks where appropriate."
+    if rule_id.startswith("PS03"):
+        return "Add a CODEOWNERS file or correct invalid owners so every relevant path is covered by a valid reviewer."
+    return message or "Review the repository configuration and apply the required security controls."
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -54,6 +119,38 @@ class Finding:
     severity: str            # one of SEVERITIES
     message: str
     location: str = ""       # e.g. ".github/workflows/foo.yml" or "branch:main"
+    title: str = ""
+    source: str = "posture"
+    evidence: dict[str, Any] = field(default_factory=dict)
+    remediation: str = ""
+    remediation_confidence: str = "deterministic"
+    remediation_source: str = "Blackout Secure Recommended Remediation"
+    provider: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.title:
+            object.__setattr__(self, "title", _default_finding_title(self.rule_id))
+        if not self.remediation:
+            object.__setattr__(self, "remediation", _default_finding_remediation(self.rule_id, self.message))
+        if not self.source:
+            object.__setattr__(self, "source", "posture")
+        if not self.remediation_source:
+            object.__setattr__(self, "remediation_source", "Blackout Secure Recommended Remediation")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rule_id": self.rule_id,
+            "severity": self.severity,
+            "title": self.title,
+            "message": self.message,
+            "source": self.source,
+            "location": self.location,
+            "evidence": dict(self.evidence or {}),
+            "remediation": self.remediation,
+            "remediation_confidence": self.remediation_confidence,
+            "remediation_source": self.remediation_source,
+            "provider": self.provider,
+        }
 
 
 @dataclass(frozen=True)
@@ -75,6 +172,73 @@ class AuditResult:
     @property
     def errored(self) -> tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.severity == "error")
+
+    def totals(self) -> dict[str, int]:
+        return {
+            "pass": len(self.passed),
+            "warn": len(self.warned),
+            "fail": len(self.failed),
+            "error": len(self.errored),
+            "skip": sum(1 for f in self.findings if f.severity == "skip"),
+        }
+
+    def summary_markdown(self) -> str:
+        lines: list[str] = ["## Summary", ""]
+        totals = self.totals()
+        lines.append(
+            f"**Totals:** 🟢 {totals['pass']} pass · 🟡 {totals['warn']} warn · "
+            f"🔴 {totals['fail']} fail · 🟣 {totals['error']} error · ⚪ {totals['skip']} skip"
+        )
+        lines.append("")
+
+        if not self.findings:
+            lines.append("_No findings._")
+            return "\n".join(lines) + "\n"
+
+        buckets: dict[int, list[Finding]] = {}
+        for f in self.findings:
+            buckets.setdefault(_family_for(f.rule_id), []).append(f)
+
+        for idx, (_, header, blurb) in enumerate(_RULE_FAMILIES):
+            rows = buckets.get(idx)
+            if not rows:
+                continue
+            lines.append(f"### {header}")
+            lines.append(f"_{blurb}_")
+            lines.append("")
+            lines.append("| Rule | Severity | Location | Title | Message | Remediation |")
+            lines.append("| ---- | -------- | -------- | ----- | ------- | ------------ |")
+            for f in rows:
+                location = f.location or "—"
+                title = f.title or "—"
+                remediation = f.remediation or "—"
+                lines.append(
+                    f"| `{f.rule_id}` | {f.severity} | {_md_escape(location)} | "
+                    f"{_md_escape(title)} | {_md_escape(f.message)} | {_md_escape(remediation)} |"
+                )
+            lines.append("")
+
+        misc = buckets.get(-1)
+        if misc:
+            lines.append("### Other")
+            lines.append("")
+            lines.append("| Rule | Severity | Location | Title | Message | Remediation |")
+            lines.append("| ---- | -------- | -------- | ----- | ------- | ------------ |")
+            for f in misc:
+                lines.append(
+                    f"| `{f.rule_id}` | {f.severity} | {_md_escape(f.location or '—')} | "
+                    f"{_md_escape(f.title or '—')} | {_md_escape(f.message)} | {_md_escape(f.remediation or '—')} |"
+                )
+            lines.append("")
+
+        if totals["skip"]:
+            lines.append(
+                "> ⚪ **skip** rows mean the audit could not run that check — "
+                "typically a token-scope limitation or a safe opt-out."
+            )
+            lines.append("")
+
+        return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------

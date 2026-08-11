@@ -252,6 +252,32 @@ silently ignored.
 Every field is optional — the kit ships safe defaults. A
 representative full file:
 
+### Remediation and AI summary controls
+
+The default path is deterministic and local-first. Remediation text is
+produced by the scanner kit itself and does not call external APIs
+unless the operator explicitly enables a provider-backed feature.
+
+```yaml
+remediation:
+  enable_ai_findings_summary: false
+  ai_findings_summary_provider: ""
+  local_heuristic_fallback: true
+```
+
+This keeps the default behavior safe:
+
+- no external model call unless `enable_ai_findings_summary: true`
+- no hidden runtime cost or secret requirement by default
+- local heuristic remediation remains available as the fallback path
+- provider-backed output is layered on top of the structured finding model
+  rather than replacing the underlying rule, severity, and SARIF evidence
+
+## 📝 `.bos-scan.yml` schema
+
+Every field is optional — the kit ships safe defaults. A
+representative full file:
+
 ```yaml
 # .bos-scan.yml — Blackout Secure Code Scanning Kit config
 
