@@ -1,0 +1,12 @@
+target_repo_role: consumer
+services: |
+  common
+  lf_line_endings
+  dependabot_actions
+  markdownlint
+  shellcheckrc
+  bos_universal_config
+  bos_universal_sync
+  bos_universal_security
+  bos_universal_marketplace
+  bos_universal_action_test

@@ -1,0 +1,72 @@
+{
+  "security": {
+    "enable_lint": true,
+    "enable_node_lint": false,
+    "node_version": "20",
+    "enable_python_lint": true,
+    "python_version": "3.12",
+    "enable_shell_lint": false,
+    "enable_dependency_review": true,
+    "enable_code_scan": true,
+    "enable_pinned_actions_check": true,
+    "enable_pr_title_check": true,
+    "pr_title_types": "feat,fix,docs,style,refactor,perf,test,build,ci,chore,revert",
+    "enable_readme_header_check": true,
+    "readme_header_profile": "marketplace"
+  },
+  "marketplace": {
+    "enabled": true,
+    "source_branch": "dev",
+    "target_branch": "main",
+    "allowlist_paths": [
+      "action.yml",
+      "README.md",
+      "LICENSE",
+      "src/**",
+      "test/**",
+      "scripts/**",
+      "pyproject.toml",
+      "poetry.lock"
+    ],
+    "blocked_paths": [
+      ".github/workflows/"
+    ],
+    "required_paths": [
+      "action.yml",
+      "README.md",
+      "LICENSE"
+    ],
+    "extra_sync_paths": []
+  },
+  "sync": {
+    "services": [
+      "common",
+      "lf_line_endings",
+      "dependabot_actions",
+      "markdownlint",
+      "shellcheckrc",
+      "bos_universal_config",
+      "bos_universal_sync",
+      "bos_universal_security",
+      "bos_universal_marketplace",
+      "bos_universal_action_test"
+    ],
+    "mode": "commit",
+    "commit_message": "chore: sync managed files from bos-automation-hub",
+    "runs_on": "ubuntu-latest",
+    "timeout_minutes": 5
+  },
+  "general": {
+    "action_test": {
+      "python_versions": ["3.10", "3.11", "3.12"],
+      "os_matrix": ["ubuntu-latest"],
+      "requirements_file": "requirements-dev.txt",
+      "pytest_args": "-q",
+      "enable_smoke_test": false,
+      "smoke_trigger": "push-dev",
+      "smoke_test_config": {},
+      "timeout_pytest": 10,
+      "timeout_smoke": 5
+    }
+  }
+}
