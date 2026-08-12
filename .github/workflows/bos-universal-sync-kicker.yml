@@ -27,7 +27,6 @@ run-name: >-
 
 permissions:
   contents: read
-  workflows: write
 
 jobs:
   resolve-target:
@@ -63,7 +62,6 @@ jobs:
     if: needs.resolve-target.outputs.ref == 'dev'
     permissions:
       contents: write
-      workflows: write
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-sync.yml@dev
     with:
       mode: ${{ inputs.mode || '' }}
@@ -74,7 +72,6 @@ jobs:
     if: needs.resolve-target.outputs.ref == 'main'
     permissions:
       contents: write
-      workflows: write
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-sync.yml@main
     with:
       mode: ${{ inputs.mode || '' }}
