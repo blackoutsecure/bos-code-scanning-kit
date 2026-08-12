@@ -13,7 +13,9 @@
     "enable_pr_title_check": true,
     "pr_title_types": "feat,fix,docs,style,refactor,perf,test,build,ci,chore,revert",
     "enable_readme_header_check": true,
-    "readme_header_profile": "marketplace"
+    "readme_header_profile": "marketplace",
+    "code_scan_fail_on": "fail",
+    "code_scan_http_timeout": "20"
   },
   "marketplace": {
     "enabled": true,
