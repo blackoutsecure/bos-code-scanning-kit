@@ -442,12 +442,19 @@ runs:
         ENABLE_SCANNERS: ${{ inputs.enable_scanners }}
         ENABLE_UPLOAD:   ${{ inputs.enable_upload }}
         FAIL_ON:         ${{ inputs.fail_on }}
+        TOKEN_INPUT_SUPPLIED: ${{ inputs.github_token != '' && 'true' || 'false' }}
         SARIF_PATH:      ${{ steps.merge.outputs.sarif_path }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}"
         python3 - <<'PY'
         import json, os, pathlib
+
+        def md_escape(value):
+            return str(value).replace("|", "\\|").replace("\n", " ")
+
+        def enabled(value):
+            return "enabled" if str(value).lower() == "true" else "disabled"
 
         scanners = [
             ("Posture audit", "bos-scan-posture.sarif",    os.environ.get("ENABLE_POSTURE")  == "true"),
@@ -539,6 +546,41 @@ runs:
         else:
             verdict = "No findings detected."
 
+        token_supplied = os.environ.get("TOKEN_INPUT_SUPPLIED") == "true"
+        if not os.environ.get("ENABLE_POSTURE") == "true":
+            token_mode = "not used"
+            token_capability = "Posture audit disabled; no GitHub posture APIs queried."
+        elif token_supplied:
+            token_mode = "github_token input supplied"
+            token_capability = (
+                "Full posture coverage if the supplied token has the required repository permissions; "
+                "check skipped probes below for any missing access."
+            )
+        else:
+            token_mode = "workflow GITHUB_TOKEN fallback"
+            token_capability = (
+                "Baseline coverage. Admin-gated controls such as secret scanning, Dependabot alerts, "
+                "and branch protection may report as skipped."
+            )
+
+        if skips:
+            observed_coverage = f"limited: {len(skips)} admin-gated probe(s) were not assessed"
+        elif os.environ.get("ENABLE_POSTURE") == "true":
+            observed_coverage = "no skipped posture probes observed in this run"
+        else:
+            observed_coverage = "not applicable"
+
+        upload_enabled = os.environ.get("ENABLE_UPLOAD") == "true"
+        sarif_path = os.environ.get("SARIF_PATH") or "not produced"
+        config_rows = [
+            ("Posture audit", enabled(os.environ.get("ENABLE_POSTURE")), "Checks GitHub security settings, workflows, branch protection, and CODEOWNERS."),
+            ("Bundled scanners", enabled(os.environ.get("ENABLE_SCANNERS")), "Runs actionlint, gitleaks, and shellcheck when matching files are present."),
+            ("SARIF upload", enabled(os.environ.get("ENABLE_UPLOAD")), f"{'Uploads' if upload_enabled else 'Does not upload'} merged findings to Code scanning category `bos-code-scanning-kit`; path: `{sarif_path}`."),
+            ("Failure policy", f"`{fail_on}`", "`fail` blocks on failure findings; `never` keeps the run advisory."),
+            ("Token mode", token_mode, token_capability),
+            ("Observed posture coverage", observed_coverage, "Use `SCANNING_PAT` if admin-gated checks are skipped."),
+        ]
+
         # ─── Console echo ────────────────────────────────────────────
         # Mirror the per-stage table + outcome to the runner log too.
         # GitHub Actions renders ANSI sequences verbatim, so colour the
@@ -569,6 +611,10 @@ runs:
                 rid = s.get("rule_id", "?")
                 msg = s.get("message", "")
                 print(f"    • {rid}: {msg}")
+        print()
+        print(f"  {bold}configuration{reset}:")
+        for setting, value, _ in config_rows:
+            print(f"    {setting}: {value}")
         print(f"  {bold}verdict{reset}: {verdict}")
         print()
 
@@ -581,6 +627,14 @@ runs:
                 for label, result, detail in rows:
                     fh.write(f"| {label} | {result} | {detail} |\n")
                 fh.write(f"\n**Outcome:** `{outcome}` — {verdict}\n")
+
+                fh.write("\n### Configuration used\n\n")
+                fh.write("| Setting | Value | What it means |\n")
+                fh.write("|---|---|---|\n")
+                for setting, value, meaning in config_rows:
+                    fh.write(
+                        f"| {md_escape(setting)} | {md_escape(value)} | {md_escape(meaning)} |\n"
+                    )
 
                 if skips:
                     fh.write("\n### Indeterminate / skipped probes\n\n")
