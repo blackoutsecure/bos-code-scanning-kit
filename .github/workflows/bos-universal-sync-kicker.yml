@@ -62,7 +62,9 @@ jobs:
     if: needs.resolve-target.outputs.ref == 'dev'
     permissions:
       contents: write
-    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-sync.yml@dev
+    # Hub dev currently has an invalid unquoted YAML default containing `:`.
+    # Use the promoted reusable until the central workflow is repaired.
+    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-sync.yml@main
     with:
       mode: ${{ inputs.mode || '' }}
 
