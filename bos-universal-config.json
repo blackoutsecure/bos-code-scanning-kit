@@ -1,4 +1,5 @@
 {
+  "target_repo_role": "consumer",
   "security": {
     "enable_lint": true,
     "enable_node_lint": false,
