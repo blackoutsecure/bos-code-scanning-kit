@@ -55,7 +55,10 @@ jobs:
     if: needs.parse-config.outputs.target_ref == 'dev'
     permissions:
       contents: read
-    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-action-test.yml@dev
+    # Hub dev currently expects action_test output from universal-config@main,
+    # which does not expose that output. Use the promoted reusable until the
+    # central dev workflow updates its normalizer reference.
+    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-action-test.yml@main
 
   action-test-main:
     name: action-test (main)
