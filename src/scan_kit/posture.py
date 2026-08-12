@@ -69,6 +69,60 @@ def _md_escape(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
+def _severity_label(severity: str) -> str:
+    labels = {
+        "pass": "Pass",
+        "warn": "Warning",
+        "fail": "High",
+        "error": "Critical",
+        "skip": "Not Assessed",
+    }
+    return labels.get(severity, severity.title())
+
+
+def _audit_verdict(totals: dict[str, int]) -> tuple[str, str]:
+    if totals["error"]:
+        return (
+            "Critical attention required",
+            "One or more audit controls could not complete cleanly. Review error rows before relying on the final posture result.",
+        )
+    if totals["fail"]:
+        return (
+            "Action required",
+            "One or more required security controls did not meet the configured policy.",
+        )
+    if totals["warn"]:
+        return (
+            "Advisory review recommended",
+            "No blocking failures were detected, but one or more controls should be reviewed and tightened.",
+        )
+    if totals["skip"] and not totals["pass"]:
+        return (
+            "Assessment limited",
+            "The audit did not produce a definitive pass/fail result for the selected controls.",
+        )
+    return (
+        "Controls passed",
+        "No failing or warning-level posture findings were detected by the configured audit controls.",
+    )
+
+
+def _recommended_actions(totals: dict[str, int]) -> list[str]:
+    actions: list[str] = []
+    if totals["error"]:
+        actions.append("Resolve audit errors first; they indicate incomplete evidence collection or an execution issue.")
+    if totals["fail"]:
+        actions.append("Remediate High findings before treating this repository as policy-compliant.")
+    if totals["warn"]:
+        actions.append("Review Warning findings during the next hardening cycle and document any accepted risk.")
+    if totals["skip"]:
+        actions.append("Re-run with the required token scopes, such as a scoped `SCANNING_PAT`, to convert Not Assessed checks into pass/fail evidence.")
+    if not actions:
+        actions.append("Maintain the current controls and keep this audit in the release or pull-request evidence trail.")
+    actions.append("Review the SARIF upload in GitHub code scanning for durable finding history and alert triage.")
+    return actions
+
+
 def _default_finding_title(rule_id: str) -> str:
     titles = {
         "PS001": "Code scanning is enabled",
@@ -183,16 +237,47 @@ class AuditResult:
         }
 
     def summary_markdown(self) -> str:
-        lines: list[str] = ["## Summary", ""]
         totals = self.totals()
-        lines.append(
-            f"**Totals:** 🟢 {totals['pass']} pass · 🟡 {totals['warn']} warn · "
-            f"🔴 {totals['fail']} fail · 🟣 {totals['error']} error · ⚪ {totals['skip']} skip"
-        )
+        verdict, verdict_detail = _audit_verdict(totals)
+        lines: list[str] = [
+            "# Blackout Secure Code Scanning Kit Audit Report",
+            "",
+            "**Provided by [Blackout Secure](https://blackoutsecure.app)**",
+            "",
+            "## Summary",
+            "",
+            f"**Verdict:** {_md_escape(verdict)}",
+            "",
+            verdict_detail,
+            "",
+            f"**Totals:** {totals['pass']} pass · {totals['warn']} warning · "
+            f"{totals['fail']} high · {totals['error']} critical · {totals['skip']} not assessed",
+            "",
+            "| Severity | Count | Meaning |",
+            "| -------- | ----- | ------- |",
+            f"| Pass | {totals['pass']} | Control satisfied the configured policy. |",
+            f"| Warning | {totals['warn']} | Review recommended; not usually a hard block by itself. |",
+            f"| High | {totals['fail']} | Required control failed and should be remediated. |",
+            f"| Critical | {totals['error']} | Audit execution or evidence collection error. |",
+            f"| Not Assessed | {totals['skip']} | Check was skipped or lacked sufficient token scope/evidence. |",
+            "",
+            "## Recommended Actions",
+            "",
+        ]
+        for action in _recommended_actions(totals):
+            lines.append(f"- {action}")
         lines.append("")
+        lines.extend([
+            "## Scope and Methodology",
+            "",
+            "This automated audit reviews repository security posture controls exposed through GitHub repository configuration, workflow definitions, branch protection, CODEOWNERS, and GitHub Advanced Security settings. Results are evidence-based at run time and are intended to support release, compliance, and engineering risk review.",
+            "",
+        ])
 
         if not self.findings:
-            lines.append("_No findings._")
+            lines.append("## Detailed Findings")
+            lines.append("")
+            lines.append("_No findings were emitted by the configured audit controls._")
             return "\n".join(lines) + "\n"
 
         buckets: dict[int, list[Finding]] = {}
@@ -203,30 +288,36 @@ class AuditResult:
             rows = buckets.get(idx)
             if not rows:
                 continue
+            if not any(line == "## Detailed Findings" for line in lines):
+                lines.append("## Detailed Findings")
+                lines.append("")
             lines.append(f"### {header}")
             lines.append(f"_{blurb}_")
             lines.append("")
-            lines.append("| Rule | Severity | Location | Title | Message | Remediation |")
-            lines.append("| ---- | -------- | -------- | ----- | ------- | ------------ |")
+            lines.append("| Rule | Severity | Location | Control | Evidence | Recommended Remediation |")
+            lines.append("| ---- | -------- | -------- | ------- | -------- | ----------------------- |")
             for f in rows:
                 location = f.location or "—"
                 title = f.title or "—"
                 remediation = f.remediation or "—"
                 lines.append(
-                    f"| `{f.rule_id}` | {f.severity} | {_md_escape(location)} | "
+                    f"| `{f.rule_id}` | {_severity_label(f.severity)} | {_md_escape(location)} | "
                     f"{_md_escape(title)} | {_md_escape(f.message)} | {_md_escape(remediation)} |"
                 )
             lines.append("")
 
         misc = buckets.get(-1)
         if misc:
-            lines.append("### Other")
+            if not any(line == "## Detailed Findings" for line in lines):
+                lines.append("## Detailed Findings")
+                lines.append("")
+            lines.append("### Other Findings")
             lines.append("")
-            lines.append("| Rule | Severity | Location | Title | Message | Remediation |")
-            lines.append("| ---- | -------- | -------- | ----- | ------- | ------------ |")
+            lines.append("| Rule | Severity | Location | Control | Evidence | Recommended Remediation |")
+            lines.append("| ---- | -------- | -------- | ------- | -------- | ----------------------- |")
             for f in misc:
                 lines.append(
-                    f"| `{f.rule_id}` | {f.severity} | {_md_escape(f.location or '—')} | "
+                    f"| `{f.rule_id}` | {_severity_label(f.severity)} | {_md_escape(f.location or '—')} | "
                     f"{_md_escape(f.title or '—')} | {_md_escape(f.message)} | {_md_escape(f.remediation or '—')} |"
                 )
             lines.append("")
@@ -237,6 +328,13 @@ class AuditResult:
                 "typically a token-scope limitation or a safe opt-out."
             )
             lines.append("")
+
+        lines.extend([
+            "---",
+            "",
+            "_This report was generated by Blackout Secure Code Scanning Kit. Validate compensating controls and accepted risks through your organization's normal security review process._",
+            "",
+        ])
 
         return "\n".join(lines) + "\n"
 

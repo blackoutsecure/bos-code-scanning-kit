@@ -463,17 +463,24 @@ def test_summary_markdown_includes_summary_and_remediation_columns():
         )
     )
     summary = result.summary_markdown()
+    assert "# Blackout Secure Code Scanning Kit Audit Report" in summary
+    assert "**Provided by [Blackout Secure](https://blackoutsecure.app)**" in summary
     assert "## Summary" in summary
+    assert "**Verdict:** Advisory review recommended" in summary
     assert "**Totals:**" in summary
-    assert "| Rule | Severity | Location | Title | Message | Remediation |" in summary
+    assert "## Recommended Actions" in summary
+    assert "| Rule | Severity | Location | Control | Evidence | Recommended Remediation |" in summary
+    assert "| `PS010` | Warning | .github/workflows/ci.yml | Workflow permissions are declared |" in summary
     assert "Set a top-level permissions block" in summary
 
 
 def test_summary_markdown_handles_no_findings():
     result = posture_mod.AuditResult(findings=())
     summary = result.summary_markdown()
+    assert "# Blackout Secure Code Scanning Kit Audit Report" in summary
     assert "## Summary" in summary
-    assert "_No findings._" in summary
+    assert "**Verdict:** Controls passed" in summary
+    assert "_No findings were emitted by the configured audit controls._" in summary
 
 
 def test_ps001_skip_when_default_setup_forbidden_and_no_advanced_analyses():
