@@ -474,6 +474,24 @@ def test_summary_markdown_includes_summary_and_remediation_columns():
     assert "Set a top-level permissions block" in summary
 
 
+def test_summary_markdown_omits_remediation_for_passed_findings():
+    result = posture_mod.AuditResult(
+        findings=(
+            posture_mod.Finding(
+                "PS011",
+                "pass",
+                "Workflow write access is restricted.",
+                location=".github/workflows/ci.yml",
+                remediation="Tighten workflow permissions.",
+            ),
+        )
+    )
+    summary = result.summary_markdown()
+    assert "| `PS011` | Pass | .github/workflows/ci.yml | Workflow write access is restricted |" in summary
+    assert "Workflow write access is restricted. | — |" in summary
+    assert "Tighten workflow permissions." not in summary
+
+
 def test_summary_markdown_handles_no_findings():
     result = posture_mod.AuditResult(findings=())
     summary = result.summary_markdown()

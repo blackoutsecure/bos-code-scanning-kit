@@ -123,6 +123,12 @@ def _recommended_actions(totals: dict[str, int]) -> list[str]:
     return actions
 
 
+def _display_remediation(finding: "Finding") -> str:
+    if finding.severity == "pass":
+        return "—"
+    return finding.remediation or "—"
+
+
 def _default_finding_title(rule_id: str) -> str:
     titles = {
         "PS001": "Code scanning is enabled",
@@ -299,7 +305,7 @@ class AuditResult:
             for f in rows:
                 location = f.location or "—"
                 title = f.title or "—"
-                remediation = f.remediation or "—"
+                remediation = _display_remediation(f)
                 lines.append(
                     f"| `{f.rule_id}` | {_severity_label(f.severity)} | {_md_escape(location)} | "
                     f"{_md_escape(title)} | {_md_escape(f.message)} | {_md_escape(remediation)} |"
@@ -316,9 +322,10 @@ class AuditResult:
             lines.append("| Rule | Severity | Location | Control | Evidence | Recommended Remediation |")
             lines.append("| ---- | -------- | -------- | ------- | -------- | ----------------------- |")
             for f in misc:
+                remediation = _display_remediation(f)
                 lines.append(
                     f"| `{f.rule_id}` | {_severity_label(f.severity)} | {_md_escape(f.location or '—')} | "
-                    f"{_md_escape(f.title or '—')} | {_md_escape(f.message)} | {_md_escape(f.remediation or '—')} |"
+                    f"{_md_escape(f.title or '—')} | {_md_escape(f.message)} | {_md_escape(remediation)} |"
                 )
             lines.append("")
 
