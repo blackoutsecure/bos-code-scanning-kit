@@ -6,6 +6,7 @@
     "node_version": "20",
     "enable_python_lint": true,
     "python_version": "3.12",
+    "python_packages": ["ruff>=0.6", "pytest>=8.0", "PyYAML>=6.0"],
     "enable_shell_lint": false,
     "enable_dependency_review": true,
     "enable_code_scan": true,
@@ -61,7 +62,8 @@
       "bos_universal_config"
     ],
     "mode": "commit",
-    "commit_message": "chore: sync managed files from bos-automation-hub",
+    "generate_commit_message": true,
+    "fallback_commit_message": "chore: sync managed files from bos-automation-hub",
     "runs_on": "ubuntu-latest",
     "timeout_minutes": 5
   },
@@ -69,7 +71,7 @@
     "action_test": {
       "python_versions": ["3.10", "3.11", "3.12"],
       "os_matrix": ["ubuntu-latest"],
-      "requirements_file": "requirements-dev.txt",
+      "python_packages": ["pytest>=8.0", "ruff>=0.6", "PyYAML>=6.0"],
       "pytest_args": "-q",
       "enable_smoke_test": false,
       "smoke_trigger": "push-dev",
