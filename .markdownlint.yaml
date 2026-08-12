@@ -1,3 +1,7 @@
+# Managed by https://github.com/blackoutsecure/bos-automation-hub —
+# do not edit. To modify, update the `markdownlint` service in
+# .github/actions/sync-managed-files/sync.py.
+#
 default: true
 
 # Long URLs and code snippets are common in docs-heavy repos.
