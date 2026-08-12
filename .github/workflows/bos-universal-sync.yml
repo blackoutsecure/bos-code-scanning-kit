@@ -191,6 +191,7 @@ jobs:
     timeout-minutes: ${{ fromJson(needs.resolve-config.outputs.sync).timeout_minutes }}
     permissions:
       contents: write
+      workflows: write
     outputs:
       changed: ${{ steps.sync.outputs.changed }}
       changed_files: ${{ steps.sync.outputs.changed_files }}
