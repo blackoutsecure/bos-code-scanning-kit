@@ -127,7 +127,7 @@ the `commit` field of the GitHub Release JSON.
 | `owner` | _(none)_ | GitHub owner of the repo being scanned. Defaults to the workflow context. |
 | `repo` | _(none)_ | GitHub repo name being scanned. Defaults to the workflow context. |
 | `config` | _(none)_ | Path to `.bos-scan.yml`. Defaults to auto-discovery at the repo root. |
-| `github_token` | _(none)_ | Token used by the posture audit (PS001 code scanning, PS002 secret scanning, PS003 Dependabot alerts, PS020-PS025 branch protection). Leave empty to fall back to the workflow's built-in GITHUB_TOKEN. That baseline token can confirm code-scanning visibility, but checks for secret scanning, Dependabot alerts, and branch protection need a `SCANNING_PAT` secret passed through this input. Follow the official walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough |
+| `github_token` | _(none)_ | GitHub token for the posture audit. Leave blank to use the workflow's built-in GITHUB_TOKEN for baseline checks. For full posture coverage, create a `SCANNING_PAT` secret and pass it here with `github_token: ${{ secrets.SCANNING_PAT \|\| secrets.GITHUB_TOKEN }}`. The PAT lets the kit verify admin-gated controls such as secret scanning, Dependabot alerts, and branch protection instead of reporting them as skipped. Walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough |
 | `enable_posture` | `true` | `true` to run the posture audit step. |
 | `enable_scanners` | `true` | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck). |
 | `enable_upload` | `true` | `true` to upload the merged SARIF to GitHub Advanced Security. |

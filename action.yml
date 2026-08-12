@@ -63,13 +63,13 @@ inputs:
   # the `github.token` fallback is applied at the step level instead.
   github_token:
     description: >-
-      Token used by the posture audit (PS001 code scanning, PS002 secret
-      scanning, PS003 Dependabot alerts, PS020-PS025 branch protection).
-      Leave empty to fall back to the workflow's built-in GITHUB_TOKEN.
-      That baseline token can confirm code-scanning visibility, but checks
-      for secret scanning, Dependabot alerts, and branch protection need
-      a `SCANNING_PAT` secret passed through this input. Follow the official
-      walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough
+      GitHub token for the posture audit. Leave blank to use the workflow's
+      built-in GITHUB_TOKEN for baseline checks. For full posture coverage,
+      create a `SCANNING_PAT` secret and pass it here with
+      `github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}`.
+      The PAT lets the kit verify admin-gated controls such as secret scanning,
+      Dependabot alerts, and branch protection instead of reporting them as
+      skipped. Walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough
     required: false
     default: ''
 
