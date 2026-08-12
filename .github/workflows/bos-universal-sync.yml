@@ -9,7 +9,6 @@ name: Blackout Secure universal sync (reusable)
   push:
     paths:
       - bos-universal-config.json
-      - bos-managed-files.yaml
       - .github/workflows/bos-universal-sync.yml
   workflow_dispatch:
     inputs:
@@ -75,6 +74,7 @@ name: Blackout Secure universal sync (reusable)
 
 permissions:
   contents: read
+  workflows: write
 
 concurrency:
   group: bos-universal-sync-${{ github.repository }}-${{ github.ref }}
@@ -191,7 +191,6 @@ jobs:
     timeout-minutes: ${{ fromJson(needs.resolve-config.outputs.sync).timeout_minutes }}
     permissions:
       contents: write
-      workflows: write
     outputs:
       changed: ${{ steps.sync.outputs.changed }}
       changed_files: ${{ steps.sync.outputs.changed_files }}
