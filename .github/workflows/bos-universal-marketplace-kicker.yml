@@ -194,7 +194,6 @@ jobs:
       )
     permissions:
       contents: read
-      models: read
     uses: blackoutsecure/bos-automation-hub/.github/workflows/repo-metadata-sync.yml@main
     with:
       checkout_ref: ${{ inputs.operation == 'release' && needs.release.outputs.tag_name || (fromJson(needs.parse-config.outputs.cfg).marketplace.target_branch || 'main') }}
