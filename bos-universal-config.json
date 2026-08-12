@@ -23,6 +23,7 @@
       "action.yml",
       "README.md",
       "LICENSE",
+      "NOTICE",
       "src/**",
       "test/**",
       "scripts/**",
@@ -35,8 +36,15 @@
     "required_paths": [
       "action.yml",
       "README.md",
-      "LICENSE"
+      "LICENSE",
+      "NOTICE"
     ],
+    "repo_metadata": {
+      "enable": true,
+      "homepage": "https://github.com/marketplace/actions/blackout-secure-code-scanning-kit",
+      "generate_topics": true,
+      "topics_fallback": "github-actions code-scanning security sarif posture-audit gitleaks actionlint shellcheck composite-action devsecops github-advanced-security"
+    },
     "extra_sync_paths": []
   },
   "sync": {
@@ -44,6 +52,8 @@
       "common",
       "lf_line_endings",
       "dependabot_actions",
+      "dependabot_pip",
+      "python",
       "markdownlint",
       "shellcheckrc",
       "bos_universal_config",
