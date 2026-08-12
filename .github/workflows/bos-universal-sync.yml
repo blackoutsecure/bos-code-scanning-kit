@@ -1,0 +1,266 @@
+# One backend for hub-local and consumer managed-file reconciliation.
+# Event-driven runs read `sync_files` from bos-universal-config.json
+# Reusable callers may either rely on that config or provide explicit inputs.
+name: Blackout Secure universal sync (reusable)
+
+"on":
+  schedule:
+    - cron: '11 14 * * 1'
+  push:
+    paths:
+      - bos-universal-config.json
+      - bos-managed-files.yaml
+      - .github/workflows/bos-universal-sync.yml
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Run mode.
+        type: choice
+        options: [commit, check]
+        default: commit
+  workflow_call:
+    inputs:
+      services:
+        description: >-
+          Optional whitespace-separated service list. When empty, services and
+          settings are read from bos-universal-config.json.
+        required: false
+        type: string
+        default: ''
+      mode:
+        description: Optional `commit` or `check` override.
+        required: false
+        type: string
+        default: ''
+      commit_message:
+        description: Optional commit message override.
+        required: false
+        type: string
+        default: ''
+      git_user_name:
+        description: Optional Git author name override.
+        required: false
+        type: string
+        default: ''
+      git_user_email:
+        description: Optional Git author email override.
+        required: false
+        type: string
+        default: ''
+      push_retries:
+        description: Optional push retry override.
+        required: false
+        type: number
+        default: 0
+      runs_on:
+        description: Optional runner override.
+        required: false
+        type: string
+        default: ''
+      timeout_minutes:
+        description: Optional per-job timeout override.
+        required: false
+        type: number
+        default: 0
+    outputs:
+      changed:
+        description: '`true` when files changed or would change.'
+        value: ${{ jobs.sync.outputs.changed }}
+      changed_files:
+        description: Newline-separated changed file list.
+        value: ${{ jobs.sync.outputs.changed_files }}
+      commit_sha:
+        description: Created commit SHA, when applicable.
+        value: ${{ jobs.sync.outputs.commit_sha }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bos-universal-sync-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-config:
+    name: Resolve sync config
+    if: >-
+      github.event_name != 'push'
+      || github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      sync: ${{ steps.resolve.outputs.sync }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load repository config
+        id: config
+        uses: blackoutsecure/bos-automation-hub/.github/actions/shared/universal-config@main
+        with:
+          allow_missing: ${{ inputs.services != '' }}
+
+      - name: Resolve explicit inputs and config
+        id: resolve
+        shell: bash
+        env:
+          CONFIG_SYNC: ${{ steps.config.outputs.sync }}
+          SERVICES: ${{ inputs.services }}
+          MODE: ${{ inputs.mode }}
+          COMMIT_MESSAGE: ${{ inputs.commit_message }}
+          GIT_USER_NAME: ${{ inputs.git_user_name }}
+          GIT_USER_EMAIL: ${{ inputs.git_user_email }}
+          PUSH_RETRIES: ${{ inputs.push_retries }}
+          RUNS_ON: ${{ inputs.runs_on }}
+          TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+          DEFAULT_RUNNER: ${{ vars.DEFAULT_RUNNER }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+
+          config = json.loads(os.environ["CONFIG_SYNC"])
+          explicit_services = os.environ.get("SERVICES", "").strip()
+          services = explicit_services.split() if explicit_services else config["services"]
+          direct_call = bool(explicit_services)
+
+          def text(name, config_key):
+              return os.environ.get(name, "").strip() or str(config[config_key])
+
+          def number(name, config_key):
+              raw = os.environ.get(name, "").strip()
+              return int(raw) if raw and int(raw) > 0 else int(config[config_key])
+
+          runs_on = os.environ.get("RUNS_ON", "").strip()
+          if not runs_on:
+              runs_on = (
+                  os.environ.get("DEFAULT_RUNNER", "").strip()
+                  if direct_call
+                  else str(config["runs_on"])
+              )
+
+          resolved = {
+              "enabled": bool(services),
+              "services": services,
+              "mode": text("MODE", "mode"),
+              "commit_message": text("COMMIT_MESSAGE", "commit_message"),
+              "git_user_name": text("GIT_USER_NAME", "git_user_name"),
+              "git_user_email": text("GIT_USER_EMAIL", "git_user_email"),
+              "push_retries": number("PUSH_RETRIES", "push_retries"),
+              "runs_on": runs_on,
+              "timeout_minutes": number("TIMEOUT_MINUTES", "timeout_minutes"),
+          }
+
+          if resolved["mode"] not in {"commit", "check"}:
+              raise SystemExit("sync mode must be 'commit' or 'check'")
+          if not 1 <= resolved["push_retries"] <= 10:
+              raise SystemExit("push_retries must be in 1-10")
+          if resolved["timeout_minutes"] < 1:
+              raise SystemExit("timeout_minutes must be positive")
+          if resolved["enabled"] and not resolved["runs_on"]:
+              raise SystemExit(
+                  "runs_on is required; set sync_files.runs_on, pass runs_on, "
+                  "or define vars.DEFAULT_RUNNER for an explicit-service call"
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"sync={json.dumps(resolved, separators=(',', ':'))}\n")
+          PY
+
+      - name: Validate selected runner
+        if: ${{ fromJson(steps.resolve.outputs.sync).enabled == true }}
+        uses: blackoutsecure/bos-automation-hub/.github/actions/shared/preflight-runner-config@main
+        with:
+          default_runner: ${{ fromJson(steps.resolve.outputs.sync).runs_on }}
+          runner_x64: ${{ vars.RUNNER_X64 }}
+          runner_arm64: ${{ vars.RUNNER_ARM64 }}
+
+  sync:
+    name: Sync managed files (${{ fromJson(needs.resolve-config.outputs.sync).mode }})
+    needs: resolve-config
+    if: >-
+      !cancelled()
+      && needs.resolve-config.result == 'success'
+      && fromJson(needs.resolve-config.outputs.sync).enabled == true
+    runs-on: ${{ fromJSON(startsWith(fromJson(needs.resolve-config.outputs.sync).runs_on, '[') && fromJson(needs.resolve-config.outputs.sync).runs_on || format('"{0}"', fromJson(needs.resolve-config.outputs.sync).runs_on)) }}
+    timeout-minutes: ${{ fromJson(needs.resolve-config.outputs.sync).timeout_minutes }}
+    permissions:
+      contents: write
+    outputs:
+      changed: ${{ steps.sync.outputs.changed }}
+      changed_files: ${{ steps.sync.outputs.changed_files }}
+      commit_sha: ${{ steps.commit.outputs.commit_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Sync configured services
+        id: sync
+        uses: blackoutsecure/bos-automation-hub/.github/actions/sync-managed-files@main
+        with:
+          services: ${{ join(fromJson(needs.resolve-config.outputs.sync).services, ' ') }}
+          fail_on_drift: ${{ fromJson(needs.resolve-config.outputs.sync).mode == 'check' }}
+
+      - name: Commit and push
+        id: commit
+        if: >-
+          fromJson(needs.resolve-config.outputs.sync).mode == 'commit'
+          && steps.sync.outputs.changed == 'true'
+        uses: blackoutsecure/bos-automation-hub/.github/actions/shared/commit-and-push@main
+        with:
+          files: ${{ steps.sync.outputs.changed_files }}
+          message: ${{ fromJson(needs.resolve-config.outputs.sync).commit_message }}
+          git_user_name: ${{ fromJson(needs.resolve-config.outputs.sync).git_user_name }}
+          git_user_email: ${{ fromJson(needs.resolve-config.outputs.sync).git_user_email }}
+          push_retries: ${{ fromJson(needs.resolve-config.outputs.sync).push_retries }}
+
+      - name: Job summary
+        if: always()
+        env:
+          SYNC: ${{ needs.resolve-config.outputs.sync }}
+          CHANGED: ${{ steps.sync.outputs.changed }}
+          CHANGED_FILES: ${{ steps.sync.outputs.changed_files }}
+          COMMIT_SHA: ${{ steps.commit.outputs.commit_sha }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          sync_raw = os.environ.get("SYNC", "")
+          sync_obj = {}
+
+          if sync_raw:
+              try:
+                  sync_obj = json.loads(sync_raw)
+              except json.JSONDecodeError:
+                  sync_obj = {}
+
+          mode = str(sync_obj.get("mode", "unknown"))
+          services = sync_obj.get("services", [])
+          services_text = " ".join(str(s) for s in services) if isinstance(services, list) else str(services or "")
+
+          changed = os.environ.get("CHANGED", "false")
+          commit_sha = os.environ.get("COMMIT_SHA", "").strip()
+          changed_files = os.environ.get("CHANGED_FILES", "")
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Sync managed files\n\n")
+              summary.write(f"- Mode: `{mode}`\n")
+              summary.write(f"- Services: `{services_text}`\n")
+              summary.write(f"- Changed: `{changed}`\n")
+              if commit_sha:
+                  summary.write(f"- Commit: `{commit_sha}`\n")
+              if changed == "true":
+                  summary.write("\n### Files\n")
+                  for file in changed_files.splitlines():
+                      if file.strip():
+                          summary.write(f"- `{file}`\n")
+          PY

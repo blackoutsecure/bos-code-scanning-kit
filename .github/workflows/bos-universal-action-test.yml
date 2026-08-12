@@ -1,0 +1,233 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# bos-universal-action-test.yml — reusable Action pytest matrix + live
+# smoke test
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Purpose
+# -------
+# Reusable test surface for GitHub Actions repositories (composite or
+# Docker-backed) that ship a Python implementation:
+#
+#   1. pytest      — runs the repo's test suite across a configurable
+#                    Python/OS matrix.
+#   2. smoke-test  — optionally exercises the action itself (`uses:
+#                    ./`) against a live upstream target, verifying it
+#                    produces the expected outputs. Gated behind
+#                    `enable_smoke_test` and `smoke_trigger` so PRs
+#                    from forks or untrusted branches don't hit live
+#                    upstream services by default.
+#
+# This complements, and does not replace, `bos-universal-security.yml`'s
+# `python-lint` job (Ruff + single-OS/Python pytest as part of the PR
+# security gate). Use this workflow when a Marketplace Action needs
+# broader matrix coverage and/or a live-upstream validation pass,
+# typically on push to the default branch rather than on every PR.
+#
+# How to call from another repo
+# ------------------------------
+#   jobs:
+#     action-test:
+#       uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-action-test.yml@main
+#       with:
+#         python_versions: '["3.10", "3.11", "3.12"]'
+#         enable_smoke_test: true
+#         smoke_test_config: '{"source": "npm", "package_name": "@actions/core"}'
+#
+# Pin discipline
+# --------------
+# Third-party action references are pinned to a 40-char SHA per hub
+# policy (gate #5 in `bos-universal-security.yml`); Dependabot keeps
+# them current.
+
+name: Blackout Secure universal action test (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python_versions:
+        description: 'JSON array of Python versions, e.g. ["3.10", "3.11", "3.12"].'
+        type: string
+        required: false
+        default: '["3.11"]'
+      os_matrix:
+        description: 'JSON array of runner labels, e.g. ["ubuntu-latest", "macos-latest", "windows-latest"].'
+        type: string
+        required: false
+        default: '["ubuntu-latest"]'
+      requirements_file:
+        description: Path to a pip requirements file installed before pytest.
+        type: string
+        required: false
+        default: requirements-dev.txt
+      pytest_args:
+        description: Additional arguments appended to the `pytest` invocation.
+        type: string
+        required: false
+        default: '-q'
+      enable_smoke_test:
+        description: >-
+          `true` to run the smoke-test job, which checks out the calling
+          repo, invokes it as an action (`uses: ./`), and asserts its
+          declared outputs are non-empty. Requires an `action.yml` at
+          the repo root.
+        type: boolean
+        required: false
+        default: false
+      smoke_trigger:
+        description: >-
+          When the smoke-test job is allowed to run: `always`,
+          `push-dev` (only on a push to the caller's `dev` branch), or
+          `never`.
+        type: string
+        required: false
+        default: push-dev
+      smoke_test_config:
+        description: >-
+          JSON object of `with:` inputs passed to the action under
+          test, e.g. '{"source": "npm", "package_name": "@actions/core"}'.
+        type: string
+        required: false
+        default: '{}'
+      timeout_pytest:
+        description: pytest job timeout, in minutes.
+        type: number
+        required: false
+        default: 10
+      timeout_smoke:
+        description: smoke-test job timeout, in minutes.
+        type: number
+        required: false
+        default: 5
+
+permissions: {}
+
+concurrency:
+  group: bos-action-test-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-config:
+    name: Resolve universal config
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      test: ${{ steps.resolve.outputs.test }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Load universal config
+        id: config
+        uses: blackoutsecure/bos-automation-hub/.github/actions/shared/universal-config@main
+        with:
+          allow_missing: 'false'
+      - name: Resolve action-test settings
+        id: resolve
+        env:
+          CONFIG: ${{ steps.config.outputs.cfg }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+
+          config = json.loads(os.environ["CONFIG"])
+          settings = {
+              "python_versions": ["3.11"],
+              "os_matrix": ["ubuntu-latest"],
+              "requirements_file": "requirements-dev.txt",
+              "pytest_args": "-q",
+              "enable_smoke_test": False,
+              "smoke_trigger": "push-dev",
+              "smoke_test_config": {},
+              "timeout_pytest": 10,
+              "timeout_smoke": 5,
+          }
+          configured = config.get("action_test", {})
+          if not isinstance(configured, dict):
+              raise SystemExit("action_test config must be an object")
+          settings.update(configured)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("test<<__BOS_TEST__\n")
+              output.write(json.dumps(settings, separators=(",", ":")) + "\n")
+              output.write("__BOS_TEST__\n")
+          PY
+
+  pytest:
+    name: pytest (py${{ matrix.python-version }} / ${{ matrix.os }})
+    needs: resolve-config
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ fromJSON(needs.resolve-config.outputs.test).timeout_pytest }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(needs.resolve-config.outputs.test).python_versions }}
+        os: ${{ fromJSON(needs.resolve-config.outputs.test).os_matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v6.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dev dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [[ -f "${{ fromJSON(needs.resolve-config.outputs.test).requirements_file }}" ]]; then
+            pip install -r "${{ fromJSON(needs.resolve-config.outputs.test).requirements_file }}"
+          else
+            pip install pytest
+          fi
+
+      - name: Run pytest
+        shell: bash
+        run: pytest ${{ fromJSON(needs.resolve-config.outputs.test).pytest_args }}
+
+  # -----------------------------------------------------------------
+  # Smoke test — validates the action against a live upstream target.
+  # Runs only when explicitly enabled, and only on the trigger the
+  # caller opted into, since it can reach out to third-party services
+  # and should not run unattended on untrusted PR heads.
+  # -----------------------------------------------------------------
+  smoke-test:
+    name: smoke test (live upstream)
+    needs: [resolve-config, pytest]
+    if: |
+      fromJSON(needs.resolve-config.outputs.test).enable_smoke_test == true &&
+      (
+        fromJSON(needs.resolve-config.outputs.test).smoke_trigger == 'always' ||
+        (fromJSON(needs.resolve-config.outputs.test).smoke_trigger == 'push-dev' && github.event_name == 'push' && github.ref == 'refs/heads/dev')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.resolve-config.outputs.test).timeout_smoke }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: action-under-test
+        uses: ./
+        with: ${{ fromJSON(needs.resolve-config.outputs.test).smoke_test_config }}
+
+      - name: Verify action outputs
+        shell: bash
+        env:
+          ACTION_VERSION_OUTPUT: ${{ steps.action-under-test.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ACTION_VERSION_OUTPUT}" ]]; then
+            echo "::error::action under test did not produce a 'version' output"
+            exit 1
+          fi
+          echo "action version output: ${ACTION_VERSION_OUTPUT}"

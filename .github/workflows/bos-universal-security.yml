@@ -1,0 +1,588 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# bos-universal-security.yml — reusable universal security / policy workflow
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Purpose
+# -------
+# One orchestrated security/policy workflow that any blackoutsecure repo can adopt as a
+# REQUIRED status check on protected branches. Combines every layer of
+# pre-merge enforcement into a single `workflow_call`-callable surface:
+#
+#   1. Lint            — bos-marketplace-kit lint composite (markdownlint,
+#                        yamllint, shellcheck, actionlint) with packaged
+#                        defaults + per-repo override.
+#   2. Dep review      — actions/dependency-review-action; blocks PRs
+#                        introducing CVE-flagged or disallowed-licensed
+#                        deps (PR scope only; the comparison needs the
+#                        merge-base, which doesn't exist on push events).
+#   3. Code scanning   — bos-code-scanning-kit: secret scan (gitleaks),
+#                        shell hardening (shellcheck), workflow auth
+#                        (actionlint), posture audit (GHAS toggles,
+#                        branch protection, CODEOWNERS), unified SARIF.
+#   4. Pinned actions  — fails if any modified workflow/action references
+#                        a third-party `uses:` by tag instead of by 40-char
+#                        SHA (gate #8 in the design doc).
+#   5. PR title        — conventional-commits-style title enforcement so
+#                        release-notes generation keeps working.
+#   6. Security summary — aggregates all of the above into one job whose
+#                        green status is the single required check on the
+#                        protected branch. Lets you change the underlying
+#                        set of gates without re-pinning required checks
+#                        in repo branch-protection.
+#
+# Logical groups (single workflow, single required check by design): jobs
+# below are ordered and commented by group —
+#   Code quality: lint, node-lint, python-lint, shell-lint
+#   Security:     dependency-review, code-scan, pinned-actions
+#   Compliance:   readme-header, pr-title
+# These stay one `workflow_call` surface (not three) so a repo pins exactly
+# one required check (`security (dev|main) / Security summary`); splitting
+# by group would force every consumer to re-pin branch protection every
+# time a gate moves between groups. Toggle individual gates via inputs
+# instead of by removing them from this file.
+#
+# Note: branch-protection drift checking lives in `bos-code-scanning-kit`
+# (rules PS020-PS025) and runs as part of gate #4. It was previously a
+# separate gate here; consolidating into the posture audit removed the
+# duplicate REST calls and the second admin-token surface.
+#
+# Explicitly NOT in scope here
+# ----------------------------
+# - Branch protection enforcement (mutating GitHub settings). The kit's
+#   `enforce` mode requires `Administration: write` which the default
+#   GITHUB_TOKEN does not have; that surface lives in a separate workflow
+#   triggered manually with a PAT.
+# - "Copilot must approve" as an approval-count gate. As of writing
+#   GitHub treats Copilot's PR review as reviewer-bot output, NOT a
+#   maintainer approval that counts toward branch-protection's
+#   required-approval threshold. The procedural workaround (auto-request
+#   Copilot, require human approval) lives in branch-protection settings
+#   + an org-level reviewer policy, not in this workflow.
+# - Merge queue enablement. This workflow includes a `merge_group` trigger
+#   so it works correctly when a caller enables the queue, but it does
+#   NOT turn the queue on — that's a Settings → Branches change.
+#
+# How to call from another repo
+# -----------------------------
+#   name: security
+#   on:
+#     pull_request:
+#       # Both branches covered — works for static repos (default `main`)
+#       # and Marketplace Action repos using the dev-default convention.
+#       branches: [main, dev]
+#     merge_group:
+#   permissions: {}     # caller declares minimal; this workflow grants per-job
+#   jobs:
+#     security:
+#       uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-security.yml@main
+#       secrets:
+#         scanning_pat: ${{ secrets.SCANNING_PAT }}      # optional
+#
+# Pin discipline
+# --------------
+# The kit and third-party action references in this file are intentionally
+# left at floating tags (`@v0.1.2`, `@v4`, `@v5`) so Dependabot can pin
+# them to SHAs via PR. Once Dependabot lands the first pin PR, gate #5
+# (pinned-actions) will START passing on this file itself.
+#
+# Reference
+# ---------
+# - bos-marketplace-kit (lint/check/branch-protection composites):
+#   https://github.com/blackoutsecure/bos-marketplace-kit
+# - bos-code-scanning-kit (umbrella scanner + posture audit):
+#   https://github.com/blackoutsecure/bos-code-scanning-kit
+
+name: Blackout Secure universal security (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      enable_lint:
+        type: boolean
+        required: false
+        default: true
+      enable_node_lint:
+        type: boolean
+        required: false
+        default: false
+      node_version:
+        type: string
+        required: false
+        default: '20'
+      enable_python_lint:
+        type: boolean
+        required: false
+        default: false
+      python_version:
+        type: string
+        required: false
+        default: '3.11'
+      enable_shell_lint:
+        type: boolean
+        required: false
+        default: false
+      enable_dependency_review:
+        type: boolean
+        required: false
+        default: true
+      enable_code_scan:
+        type: boolean
+        required: false
+        default: true
+      enable_pinned_actions_check:
+        type: boolean
+        required: false
+        default: true
+      enable_pr_title_check:
+        type: boolean
+        required: false
+        default: true
+      pr_title_types:
+        description: >-
+          Comma-separated list of allowed conventional-commit types for
+          the PR title check. Default matches angular convention.
+        type: string
+        required: false
+        default: feat,fix,docs,style,refactor,perf,test,build,ci,chore,revert
+      enable_readme_header_check:
+        description: >-
+          `true` to verify the repo's README starts with the canonical
+          BlackOut Secure header (org H1, copyright line, fixed badge
+          set). Profile is auto-detected from `action.yml` /
+          `Dockerfile` presence at the repo root.
+        type: boolean
+        required: false
+        default: true
+      readme_header_profile:
+        description: >-
+          Override the README-header profile: `auto` (default), or one
+          of `marketplace`, `docker`, `generic`.
+        type: string
+        required: false
+        default: auto
+      config_authoritative:
+        description: Use bos-universal-config.json instead of direct gate inputs.
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      scanning_pat:
+        description: >-
+          Optional PAT with admin reach for the code-scanning kit's
+          posture audit (PS002 secret scanning, PS003 Dependabot alerts,
+          PS020-PS025 branch protection). Falls back to GITHUB_TOKEN when
+          absent — sufficient for PS001 only.
+        required: false
+
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: bos-security-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-config:
+    name: Resolve universal config
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      gate: ${{ steps.resolve.outputs.gate }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Load universal config
+        id: config
+        uses: blackoutsecure/bos-automation-hub/.github/actions/shared/universal-config@main
+        with:
+          allow_missing: 'false'
+      - name: Resolve security settings
+        id: resolve
+        env:
+          CONFIG: ${{ steps.config.outputs.cfg }}
+          EVENT_NAME: ${{ github.event_name }}
+          CONFIG_AUTHORITATIVE: ${{ inputs.config_authoritative }}
+          INPUT_ENABLE_LINT: ${{ inputs.enable_lint }}
+          INPUT_ENABLE_NODE_LINT: ${{ inputs.enable_node_lint }}
+          INPUT_NODE_VERSION: ${{ inputs.node_version }}
+          INPUT_ENABLE_PYTHON_LINT: ${{ inputs.enable_python_lint }}
+          INPUT_PYTHON_VERSION: ${{ inputs.python_version }}
+          INPUT_ENABLE_SHELL_LINT: ${{ inputs.enable_shell_lint }}
+          INPUT_ENABLE_DEPENDENCY_REVIEW: ${{ inputs.enable_dependency_review }}
+          INPUT_ENABLE_CODE_SCAN: ${{ inputs.enable_code_scan }}
+          INPUT_ENABLE_PINNED_ACTIONS: ${{ inputs.enable_pinned_actions_check }}
+          INPUT_ENABLE_PR_TITLE: ${{ inputs.enable_pr_title_check }}
+          INPUT_PR_TITLE_TYPES: ${{ inputs.pr_title_types }}
+          INPUT_ENABLE_README: ${{ inputs.enable_readme_header_check }}
+          INPUT_README_PROFILE: ${{ inputs.readme_header_profile }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+
+          config = json.loads(os.environ["CONFIG"])
+          gate = {
+              "enable_lint": True,
+              "enable_node_lint": False,
+              "node_version": "20",
+              "enable_python_lint": False,
+              "python_version": "3.11",
+              "enable_shell_lint": False,
+              "enable_dependency_review": True,
+              "enable_code_scan": True,
+              "enable_pinned_actions_check": True,
+              "enable_pr_title_check": True,
+              "pr_title_types": "feat,fix,docs,style,refactor,perf,test,build,ci,chore,revert",
+              "enable_readme_header_check": True,
+              "readme_header_profile": "auto",
+          }
+          configured = config.get("gate", {})
+          if not isinstance(configured, dict):
+              raise SystemExit("security config must be an object")
+          gate.update(configured)
+          use_config = (
+              os.environ["EVENT_NAME"] != "workflow_call"
+              or os.environ["CONFIG_AUTHORITATIVE"].lower() == "true"
+          )
+          if not use_config:
+              def boolean(name, default):
+                  raw = os.environ.get(name, "").lower()
+                  return default if raw == "" else raw == "true"
+
+              gate.update({
+                  "enable_lint": boolean("INPUT_ENABLE_LINT", True),
+                  "enable_node_lint": boolean("INPUT_ENABLE_NODE_LINT", False),
+                  "node_version": os.environ["INPUT_NODE_VERSION"] or "20",
+                  "enable_python_lint": boolean("INPUT_ENABLE_PYTHON_LINT", False),
+                  "python_version": os.environ["INPUT_PYTHON_VERSION"] or "3.11",
+                  "enable_shell_lint": boolean("INPUT_ENABLE_SHELL_LINT", False),
+                  "enable_dependency_review": boolean("INPUT_ENABLE_DEPENDENCY_REVIEW", True),
+                  "enable_code_scan": boolean("INPUT_ENABLE_CODE_SCAN", True),
+                  "enable_pinned_actions_check": boolean("INPUT_ENABLE_PINNED_ACTIONS", True),
+                  "enable_pr_title_check": boolean("INPUT_ENABLE_PR_TITLE", True),
+                  "pr_title_types": os.environ["INPUT_PR_TITLE_TYPES"] or gate["pr_title_types"],
+                  "enable_readme_header_check": boolean("INPUT_ENABLE_README", True),
+                  "readme_header_profile": os.environ["INPUT_README_PROFILE"] or "auto",
+              })
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("gate<<__BOS_GATE__\n")
+              output.write(json.dumps(gate, separators=(",", ":")) + "\n")
+              output.write("__BOS_GATE__\n")
+          PY
+
+  # -----------------------------------------------------------------
+  # 1. Lint — markdownlint / yamllint / shellcheck / actionlint via the
+  # kit composite (already inherits packaged defaults; per-repo overrides
+  # via standard config filenames at the repo root).
+  # Group: Code quality
+  # -----------------------------------------------------------------
+  lint:
+    needs: resolve-config
+    if: ${{ fromJSON(needs.resolve-config.outputs.gate).enable_lint == true }}
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run kit lint composite
+        uses: blackoutsecure/bos-marketplace-kit/.github/actions/lint@33472b3595a0381843093da9f6640c1b7a5a303a # v0.1.9
+        with:
+          severity: fail
+
+  node-lint:
+    needs: resolve-config
+    if: ${{ fromJSON(needs.resolve-config.outputs.gate).enable_node_lint == true }}
+    name: Node (ESLint + Prettier)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ fromJSON(needs.resolve-config.outputs.gate).node_version }}
+      - name: Install dependencies
+        run: |
+          if [[ -f package-lock.json ]]; then
+            npm ci
+          else
+            npm install
+          fi
+      - name: ESLint
+        run: |
+          if npm run | grep -qE '^  lint$'; then
+            npm run lint -- --max-warnings=0 || npm run lint
+          else
+            echo "::notice::no 'lint' script in package.json; skipping ESLint"
+          fi
+      - name: Prettier
+        run: |
+          if npm run | grep -qE '^  format$'; then
+            npx prettier --check "**/*.{js,json,md,yml,yaml}" --ignore-path .gitignore
+          else
+            echo "::notice::no 'format' script in package.json; skipping Prettier"
+          fi
+
+  python-lint:
+    needs: resolve-config
+    if: ${{ fromJSON(needs.resolve-config.outputs.gate).enable_python_lint == true }}
+    name: Python (Ruff + pytest)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v6.0.0
+        with:
+          python-version: ${{ fromJSON(needs.resolve-config.outputs.gate).python_version }}
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [[ -f requirements-dev.txt ]]; then
+            pip install -r requirements-dev.txt
+          else
+            pip install ruff pytest
+          fi
+      - name: Ruff
+        run: ruff check .
+      - name: Pytest
+        run: |
+          if [[ -d test || -d tests ]]; then
+            pytest -q
+          else
+            echo "::notice::no test/ or tests/ directory; skipping pytest"
+          fi
+
+  shell-lint:
+    needs: resolve-config
+    if: ${{ fromJSON(needs.resolve-config.outputs.gate).enable_shell_lint == true }}
+    name: Shell validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install shell test tools
+        run: |
+          sudo apt-get update
+          if ${{ fromJSON(needs.resolve-config.outputs.gate).enable_lint == true }}; then
+            sudo apt-get install -y bats
+          else
+            sudo apt-get install -y shellcheck bats
+          fi
+      - name: ShellCheck
+        if: ${{ fromJSON(needs.resolve-config.outputs.gate).enable_lint != true }}
+        run: |
+          mapfile -t files < <(find . -path ./.github -prune -o -type f -name '*.sh' -print)
+          if (( ${#files[@]} == 0 )); then
+            echo "::notice::no *.sh files outside .github/; skipping ShellCheck"
+            exit 0
+          fi
+          shellcheck "${files[@]}"
+      - name: Bats
+        run: |
+          mapfile -t tests < <(find test tests -type f -name '*.bats' -print 2>/dev/null || true)
+          if (( ${#tests[@]} == 0 )); then
+            echo "::notice::no *.bats files under test/ or tests/; skipping Bats"
+            exit 0
+          fi
+          bats "${tests[@]}"
+
+  # -----------------------------------------------------------------
+  # 3. Dependency review — GitHub's first-party supply-chain gate.
+  # Compares the PR's dep graph against the base ref and blocks adds
+  # with known CVEs or out-of-policy licenses. PR-scope only — the
+  # action requires a base/head pair, so it is skipped on merge_group
+  # (the merge-queue commit already passed this on the original PR).
+  # Group: Security
+  # -----------------------------------------------------------------
+  dependency-review:
+    needs: resolve-config
+    if: ${{ fromJSON(needs.resolve-config.outputs.gate).enable_dependency_review == true && github.event_name == 'pull_request' }}
+    name: Dependency review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@v4  # TODO: pin to SHA via Dependabot
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  # -----------------------------------------------------------------
+  # 4. Code scanning — umbrella scan + posture audit. Uploads merged
+  # SARIF to GitHub Advanced Security. `security-events: write` is
+  # required for the SARIF upload step inside the kit.
+  # Group: Security
+  # -----------------------------------------------------------------
+  code-scan:
+    needs: resolve-config
+    if: ${{ fromJSON(needs.resolve-config.outputs.gate).enable_code_scan == true }}
+    name: Code scanning
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run bos-code-scanning-kit
+        uses: blackoutsecure/bos-code-scanning-kit@37ee8d5cf143be59b02dd9fcbb3070b174dc22e3 # v1
+        with:
+          github_token: ${{ secrets.scanning_pat || secrets.GITHUB_TOKEN }}
+          fail_on: fail
+          enable_posture: 'true'
+          enable_scanners: 'true'
+          enable_upload: 'true'
+
+  # -----------------------------------------------------------------
+  # 5. Pinned actions — ensures every third-party `uses:` reference in
+  # modified workflow / action files is pinned to a 40-char SHA.
+  # Local (`./...`) and docker (`docker://...`) refs are exempt.
+  # Implementation lives in this repo as a composite so other repos
+  # adopt the same enforcement by virtue of calling this workflow.
+  #
+  # MIGRATION: this gate duplicates `bos-code-scanning-kit` rule PS012.
+  # Once the pinned kit release ships PS012, remove this job AND the
+  # `enable_pinned_actions_check`
+  # input — the kit's posture audit (gate #4) will own the check.
+  # Group: Security
+  # -----------------------------------------------------------------
+  pinned-actions:
+    needs: resolve-config
+    if: ${{ fromJSON(needs.resolve-config.outputs.gate).enable_pinned_actions_check == true }}
+    name: Pinned actions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Need full history so the composite can diff against base.
+          fetch-depth: 0
+      - name: Check `uses:` pinning
+        uses: blackoutsecure/bos-automation-hub/.github/actions/check-pinned-actions@main  # TODO: pin to SHA after first tag
+
+  # -----------------------------------------------------------------
+  # 6a. README header — verify the README starts with the canonical
+  # BlackOut Secure org header pattern (H1, copyright line, fixed badge
+  # set). Profile is auto-detected from repo contents. Cheap, fast, and
+  # keeps every public repo on-brand without manual review.
+  # Group: Compliance
+  # -----------------------------------------------------------------
+  readme-header:
+    needs: resolve-config
+    if: ${{ fromJSON(needs.resolve-config.outputs.gate).enable_readme_header_check == true }}
+    name: README header
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate README header
+        uses: blackoutsecure/bos-automation-hub/.github/actions/shared/check-readme-header@main  # TODO: pin to SHA after next hub release
+        with:
+          profile: ${{ fromJSON(needs.resolve-config.outputs.gate).readme_header_profile }}
+
+  # -----------------------------------------------------------------
+  # 6. PR title — conventional-commits format so release-notes
+  # generation parses cleanly. PR-scope only.
+  # Group: Compliance
+  # -----------------------------------------------------------------
+  pr-title:
+    needs: resolve-config
+    if: ${{ fromJSON(needs.resolve-config.outputs.gate).enable_pr_title_check == true && github.event_name == 'pull_request' }}
+    name: PR title format
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: ${{ fromJSON(needs.resolve-config.outputs.gate).pr_title_types }}
+          requireScope: false
+          subjectPattern: ^.{3,}$
+          subjectPatternError: |
+            PR title subject must be at least 3 characters after the
+            `<type>:` prefix. Examples:
+              feat(sync): add target_repo_role to bos-managed-files.yaml
+              fix(lint): allow `truthy: on/off` in yamllint default
+
+  # -----------------------------------------------------------------
+  # 6. Security summary — single aggregated job that depends on every
+  # other check. Use THIS job as the required status check in branch
+  # protection (the managed kicker calls this workflow from two
+  # branch-scoped jobs, so the check name is `security (dev) /
+  # Security summary` or `security (main) / Security summary`
+  # depending on which branch a run targets). That way the set of
+  # underlying gates can change without re-pinning required checks
+  # in repo settings.
+  #
+  # `if: always()` so this runs even when an upstream job is skipped
+  # (e.g. dependency-review skipped on merge_group). The `result`
+  # comparison below treats `skipped` as acceptable; only `failure`
+  # and `cancelled` propagate.
+  # -----------------------------------------------------------------
+  summary:
+    name: Security summary
+    if: ${{ always() }}
+    needs:
+      - resolve-config
+      - lint
+      - node-lint
+      - python-lint
+      - shell-lint
+      - dependency-review
+      - code-scan
+      - pinned-actions
+      - readme-header
+      - pr-title
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Evaluate gate results
+        env:
+          R_LINT: ${{ needs.lint.result }}
+          R_NODE: ${{ needs.node-lint.result }}
+          R_PYTHON: ${{ needs.python-lint.result }}
+          R_SHELL: ${{ needs.shell-lint.result }}
+          R_DEPREVIEW: ${{ needs.dependency-review.result }}
+          R_CODESCAN: ${{ needs.code-scan.result }}
+          R_PINNED: ${{ needs.pinned-actions.result }}
+          R_README: ${{ needs.readme-header.result }}
+          R_PRTITLE: ${{ needs.pr-title.result }}
+        run: |
+          set -euo pipefail
+          fail=0
+          for name in LINT NODE PYTHON SHELL DEPREVIEW CODESCAN PINNED README PRTITLE; do
+            var="R_${name}"
+            res="${!var}"
+            case "$res" in
+              success|skipped) printf '✓ %-12s %s\n' "$name" "$res" ;;
+              *)               printf '✗ %-12s %s\n' "$name" "$res"; fail=1 ;;
+            esac
+          done
+          if [ "$fail" -eq 1 ]; then
+            echo ""
+            echo "One or more required gates failed or were cancelled."
+            exit 1
+          fi
+          echo ""
+          echo "All gates green or intentionally skipped."

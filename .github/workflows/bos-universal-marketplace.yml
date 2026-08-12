@@ -1,0 +1,498 @@
+# Marketplace Action CI (reusable).
+#
+# Standard PR-time CI loop for a GitHub Marketplace Action repo:
+# wraps the [`bos-marketplace-kit`](https://github.com/marketplace/actions/blackout-secure-marketplace-kit)
+# `check` + `branding-preview` (+ optional `name-check`) composites
+# into one drop-in reusable workflow.
+#
+# This is the source-branch (`dev`) companion to:
+#   * [`marketplace-repo-guard.yml`](marketplace-repo-guard.yml) — PR-time guard against
+#     workflow files landing on `main`.
+#   * [`release-promote.yml`](release-promote.yml) — dev -> main allowlist promotion.
+#
+# Together those three reusable workflows form the consumer-facing
+# Marketplace Action stack. `bos-universal-security.yml` nests this PR CI workflow so its
+# result participates in the aggregated `Security summary` job, while the managed
+# `bos-universal-marketplace-kicker.yml` also protects and promotes the stable
+# branch through event-scoped jobs.
+#   * fast `check` feedback on every PR (manifest validity, missing
+#     LICENSE / README, branding colour/icon allowlist, workflow-on-
+#     default-branch detection, community-health files);
+#   * a rendered SVG preview of the Marketplace card on every PR
+#     (uploaded as a build artifact);
+#   * optional one-shot name-availability check before first publish;
+#   * PR-time block on Marketplace-violating diffs (guard);
+#   * dev -> main allowlist promote + GitHub Release publish (release).
+#
+# Implementation: this workflow is the ergonomic layer (job
+# orchestration, artifact upload, job-summary rollup) around the kit
+# composites. The actual Marketplace-rule logic lives in
+# `bos-marketplace-kit` and is SHA-pinned to a published kit
+# release; Dependabot will bump the pin in lockstep across all
+# three reusable workflows.
+#
+# Trigger model: the managed `bos-universal-marketplace-kicker.yml` invokes
+# this workflow for pull requests, development-branch pushes, and optional
+# one-shot manual checks. Generic lint and security run independently through
+# `bos-universal-security-kicker.yml`.
+name: Blackout Secure universal Marketplace (reusable)
+
+"on":
+  workflow_call:
+    inputs:
+      # ----- check -----------------------------------------------------------
+      action_yml_path:
+        description: >-
+          Path to the action manifest to lint. Default `action.yml`
+          at the repo root.
+        required: false
+        type: string
+        default: 'action.yml'
+      fail_on_warning:
+        description: >-
+          `true` to treat OP### (operational best-practice) warnings
+          as failures. MP### (Marketplace REQUIRED) and SC###
+          (security) checks always fail. Default `false`.
+        required: false
+        type: boolean
+        default: false
+      skip_checks:
+        description: >-
+          Comma-separated list of check IDs to skip (e.g.
+          `OP003,SC002`). Use when migrating an existing repo into
+          compliance gradually.
+        required: false
+        type: string
+        default: ''
+      check_org_health:
+        description: >-
+          `true` (default) to consult the org `.github` repo for
+          community-health files (SECURITY.md, CODE_OF_CONDUCT.md,
+          etc.) before failing the related CH/SC rules.
+        required: false
+        type: boolean
+        default: true
+      org_health_repo:
+        description: >-
+          `owner/.github` repository hosting the org's shared
+          community-health defaults. Empty (default) resolves to
+          `<repository_owner>/.github` inside the kit composite.
+        required: false
+        type: string
+        default: ''
+      require_security:
+        description: 'Policy for SECURITY.md (SC003). `fail` | `warn` | `skip`. Default `warn`.'
+        required: false
+        type: string
+        default: 'warn'
+      require_code_of_conduct:
+        description: 'Policy for CODE_OF_CONDUCT.md. `fail` | `warn` | `skip`. Default `warn`.'
+        required: false
+        type: string
+        default: 'warn'
+      require_contributing:
+        description: 'Policy for CONTRIBUTING.md. `fail` | `warn` | `skip`. Default `warn`.'
+        required: false
+        type: string
+        default: 'warn'
+      require_support:
+        description: 'Policy for SUPPORT.md. `fail` | `warn` | `skip`. Default `skip`.'
+        required: false
+        type: string
+        default: 'skip'
+      require_issue_templates:
+        description: 'Policy for `.github/ISSUE_TEMPLATE/`. `fail` | `warn` | `skip`. Default `skip`.'
+        required: false
+        type: string
+        default: 'skip'
+      require_pr_template:
+        description: 'Policy for `.github/PULL_REQUEST_TEMPLATE.md`. `fail` | `warn` | `skip`. Default `skip`.'
+        required: false
+        type: string
+        default: 'skip'
+      require_funding:
+        description: 'Policy for `.github/FUNDING.yml`. `fail` | `warn` | `skip`. Default `skip`.'
+        required: false
+        type: string
+        default: 'skip'
+
+      # ----- community-health source mode (where each file lives) ---------
+      # Lets callers express *where* each community-health file is expected
+      # to live so removing a local copy in favour of the org `.github`
+      # repo doesn't silently turn into a `warn`. See the kit
+      # `community_health_source` docs for full semantics.
+      #   * `local`   — file must be in this repo (org fallback disabled).
+      #   * `inherit` — file expected at `${org_health_repo}`; local copy
+      #                 is intentionally absent and NOT consulted.
+      #   * `either`  — local first, fall back to org (default, back-compat).
+      community_health_source:
+        description: >-
+          Global default source for CH/SC files. `local` | `inherit` |
+          `either`. Default `either` (back-compat). Override per-rule with
+          the `*_source` inputs below.
+        required: false
+        type: string
+        default: 'either'
+      security_source:
+        description: 'Per-rule source for SECURITY.md (SC003). Empty = use global.'
+        required: false
+        type: string
+        default: ''
+      code_of_conduct_source:
+        description: 'Per-rule source for CODE_OF_CONDUCT.md (CH001). Empty = use global.'
+        required: false
+        type: string
+        default: ''
+      contributing_source:
+        description: 'Per-rule source for CONTRIBUTING.md (CH002). Empty = use global.'
+        required: false
+        type: string
+        default: ''
+      support_source:
+        description: 'Per-rule source for SUPPORT.md (CH003). Empty = use global.'
+        required: false
+        type: string
+        default: ''
+      issue_templates_source:
+        description: 'Per-rule source for issue templates (CH004). Empty = use global.'
+        required: false
+        type: string
+        default: ''
+      pr_template_source:
+        description: 'Per-rule source for PR template (CH005). Empty = use global.'
+        required: false
+        type: string
+        default: ''
+      funding_source:
+        description: 'Per-rule source for FUNDING.yml (CH006). Empty = use global.'
+        required: false
+        type: string
+        default: ''
+
+      # ----- DP/CQ/LT/GH/MS/SR rules (new families added in kit v0.2.0+) -
+      # Same `fail | warn | skip` semantics as the CH/SC rules above.
+      # Defaults follow the kit's own defaults — back-compat additive.
+      require_dependabot:
+        description: 'Policy for `.github/dependabot.yml` presence (DP001). Default `warn`.'
+        required: false
+        type: string
+        default: 'warn'
+      require_codeql:
+        description: 'Policy for a CodeQL workflow (CQ001). Default `warn`.'
+        required: false
+        type: string
+        default: 'warn'
+      require_editorconfig:
+        description: 'Policy for `.editorconfig` presence (LT001). Default `warn`.'
+        required: false
+        type: string
+        default: 'warn'
+      require_gitattributes:
+        description: 'Policy for `.gitattributes` presence (LT002). Default `warn`.'
+        required: false
+        type: string
+        default: 'warn'
+      require_gitignore:
+        description: 'Policy for `.gitignore` presence (LT003). Default `warn`.'
+        required: false
+        type: string
+        default: 'warn'
+      require_markdownlint:
+        description: 'Policy for markdownlint config presence (LT004). Default `skip`.'
+        required: false
+        type: string
+        default: 'skip'
+      require_yamllint:
+        description: 'Policy for yamllint config presence (LT005). Default `skip`.'
+        required: false
+        type: string
+        default: 'skip'
+      require_ghas_code_scanning:
+        description: >-
+          Policy for code-scanning enabled at repo level (GH001). Requires
+          `github_token` with `metadata: read`. Default `warn`.
+        required: false
+        type: string
+        default: 'warn'
+      require_ghas_secret_scanning:
+        description: >-
+          Policy for secret-scanning enabled at repo level (GH002).
+          Requires `github_token` with admin/write on the repo to introspect
+          `security_and_analysis`. Default `warn`.
+        required: false
+        type: string
+        default: 'warn'
+      require_dependabot_alerts:
+        description: >-
+          Policy for Dependabot alerts enabled at repo level (GH003).
+          Requires `github_token` with `Administration: read`. Default `warn`.
+        required: false
+        type: string
+        default: 'warn'
+      require_security_devops:
+        description: >-
+          Policy for a Microsoft Security DevOps workflow being present
+          (MS001). Opt-in. Default `skip`.
+        required: false
+        type: string
+        default: 'skip'
+      require_scorecard:
+        description: >-
+          Policy for an OpenSSF Scorecard workflow being present (SR001).
+          Opt-in. Default `skip`.
+        required: false
+        type: string
+        default: 'skip'
+
+      # ----- name-check (opt-in) --------------------------------------------
+      run_name_check:
+        description: >-
+          `true` to run the Marketplace name-availability check
+          (user/org collision, existing listing collision, reserved
+          category / feature). Default `false` — useful as a one-
+          shot before first publish; redundant once the listing
+          exists (you'll always collide with your own listing).
+        required: false
+        type: boolean
+        default: false
+      proposed_name:
+        description: >-
+          Name string to check. Empty (default) reads `name:` from
+          the manifest at `action_yml_path`. Has no effect unless
+          `run_name_check: true`.
+        required: false
+        type: string
+        default: ''
+      name_check_fail_on_collision:
+        description: >-
+          `true` (default) to fail the job on any collision; `false`
+          to log warnings + emit outputs and continue. Has no effect
+          unless `run_name_check: true`.
+        required: false
+        type: boolean
+        default: true
+
+      # ----- branding-preview -----------------------------------------------
+      run_branding_preview:
+        description: >-
+          `true` (default) to render the Marketplace card SVG on
+          every PR and upload it as a build artifact. Provides
+          reviewers a visual of how the listing's icon + colour
+          combination will appear.
+        required: false
+        type: boolean
+        default: true
+      branding_preview_feather_ref:
+        description: >-
+          Git ref of the `feathericons/feather` repo to fetch icons
+          from. Default `v4.28.0` (the snapshot Marketplace uses).
+        required: false
+        type: string
+        default: 'v4.28.0'
+      branding_preview_artifact_name:
+        description: >-
+          Artifact name for the uploaded SVG card. Default
+          `marketplace-card`.
+        required: false
+        type: string
+        default: 'marketplace-card'
+      branding_preview_artifact_retention_days:
+        description: >-
+          Artifact retention. Default `14`.
+        required: false
+        type: number
+        default: 14
+
+    outputs:
+      check_passed:
+        description: '`true` when the kit `check` step completed without failures.'
+        value: ${{ jobs.check.outputs.check_passed }}
+      name_check_collision:
+        description: >-
+          `true` when name-check detected any collision (user/org,
+          Marketplace listing, reserved category, reserved feature).
+          Empty when `run_name_check: false`.
+        value: ${{ jobs.name-check.outputs.collision }}
+      branding_preview_artifact:
+        description: >-
+          Name of the uploaded artifact containing the rendered card
+          SVG. Empty when `run_branding_preview: false`.
+        value: ${{ jobs.branding-preview.outputs.artifact }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bos-universal-marketplace-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # `check` — manifest validity + Marketplace rule compliance.
+  #
+  # Pinned to `ubuntu-latest`:
+  #   * Pure metadata + actionlint + python3 + curl. No reason to
+  #     consume self-hosted capacity.
+  #   * MUST be able to run when self-hosted runners are unhealthy.
+  # ---------------------------------------------------------------------------
+  check:
+    name: Marketplace check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      check_passed: ${{ steps.check.conclusion == 'success' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Marketplace pre-publish check
+        id: check
+        # Kit `check` composite. SHA-pinned per the hub GHA pin
+        # policy. Dependabot bumps in lockstep with the guard +
+        # promote pins.
+        uses: blackoutsecure/bos-marketplace-kit/.github/actions/check@33472b3595a0381843093da9f6640c1b7a5a303a # v0.1.9
+        with:
+          action_yml_path:        ${{ inputs.action_yml_path }}
+          fail_on_warning:        ${{ inputs.fail_on_warning }}
+          skip_checks:            ${{ inputs.skip_checks }}
+          github_token:           ${{ github.token }}
+          check_org_health:       ${{ inputs.check_org_health }}
+          org_health_repo:        ${{ inputs.org_health_repo }}
+          require_security:        ${{ inputs.require_security }}
+          require_code_of_conduct: ${{ inputs.require_code_of_conduct }}
+          require_contributing:    ${{ inputs.require_contributing }}
+          require_support:         ${{ inputs.require_support }}
+          require_issue_templates: ${{ inputs.require_issue_templates }}
+          require_pr_template:     ${{ inputs.require_pr_template }}
+          require_funding:         ${{ inputs.require_funding }}
+          community_health_source: ${{ inputs.community_health_source }}
+          security_source:         ${{ inputs.security_source }}
+          code_of_conduct_source:  ${{ inputs.code_of_conduct_source }}
+          contributing_source:     ${{ inputs.contributing_source }}
+          support_source:          ${{ inputs.support_source }}
+          issue_templates_source:  ${{ inputs.issue_templates_source }}
+          pr_template_source:      ${{ inputs.pr_template_source }}
+          funding_source:          ${{ inputs.funding_source }}
+          require_dependabot:           ${{ inputs.require_dependabot }}
+          require_codeql:               ${{ inputs.require_codeql }}
+          require_editorconfig:         ${{ inputs.require_editorconfig }}
+          require_gitattributes:        ${{ inputs.require_gitattributes }}
+          require_gitignore:            ${{ inputs.require_gitignore }}
+          require_markdownlint:         ${{ inputs.require_markdownlint }}
+          require_yamllint:             ${{ inputs.require_yamllint }}
+          require_ghas_code_scanning:   ${{ inputs.require_ghas_code_scanning }}
+          require_ghas_secret_scanning: ${{ inputs.require_ghas_secret_scanning }}
+          require_dependabot_alerts:    ${{ inputs.require_dependabot_alerts }}
+          require_security_devops:      ${{ inputs.require_security_devops }}
+          require_scorecard:            ${{ inputs.require_scorecard }}
+
+  # ---------------------------------------------------------------------------
+  # `name-check` — opt-in Marketplace name availability check.
+  # Useful as a one-shot before first publish; off by default because
+  # once the listing exists you'll always collide with your own.
+  # ---------------------------------------------------------------------------
+  name-check:
+    name: Marketplace name check
+    if: ${{ inputs.run_name_check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      collision: ${{ steps.name.outputs.user_or_org_collision == 'true' || steps.name.outputs.marketplace_collision == 'true' || steps.name.outputs.reserved_category == 'true' || steps.name.outputs.reserved_feature == 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve proposed name
+        id: resolve
+        env:
+          PROPOSED:        ${{ inputs.proposed_name }}
+          ACTION_YML_PATH: ${{ inputs.action_yml_path }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PROPOSED}" ]; then
+            NAME="${PROPOSED}"
+          else
+            if [ ! -f "${ACTION_YML_PATH}" ]; then
+              echo "::error::action_yml_path not found: ${ACTION_YML_PATH}" >&2
+              exit 1
+            fi
+            # Extract top-level `name:` from action.yml. Tolerates
+            # quoted and unquoted forms. First match wins; nested
+            # keys named `name:` (e.g. inside `inputs:`) are ignored
+            # because they are indented.
+            NAME="$(awk '/^name:[[:space:]]*/{
+              sub(/^name:[[:space:]]*/, "")
+              sub(/^["'\'']/, "")
+              sub(/["'\''][[:space:]]*$/, "")
+              print
+              exit
+            }' "${ACTION_YML_PATH}")"
+            if [ -z "${NAME}" ]; then
+              echo "::error::Could not resolve top-level 'name:' from ${ACTION_YML_PATH}" >&2
+              exit 1
+            fi
+          fi
+          echo "name=${NAME}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved proposed name: '${NAME}'"
+
+      - name: Marketplace name check
+        id: name
+        uses: blackoutsecure/bos-marketplace-kit/.github/actions/name-check@33472b3595a0381843093da9f6640c1b7a5a303a # v0.1.9
+        with:
+          proposed_name:     ${{ steps.resolve.outputs.name }}
+          fail_on_collision: ${{ inputs.name_check_fail_on_collision }}
+
+  # ---------------------------------------------------------------------------
+  # `branding-preview` — render Marketplace card SVG; upload as
+  # artifact for PR reviewers.
+  # ---------------------------------------------------------------------------
+  branding-preview:
+    name: Marketplace branding preview
+    if: ${{ inputs.run_branding_preview }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Render branding preview
+        id: render
+        uses: blackoutsecure/bos-marketplace-kit/.github/actions/branding-preview@33472b3595a0381843093da9f6640c1b7a5a303a # v0.1.9
+        with:
+          action_yml_path: ${{ inputs.action_yml_path }}
+          feather_ref:     ${{ inputs.branding_preview_feather_ref }}
+
+      - name: Upload card SVG
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name:            ${{ inputs.branding_preview_artifact_name }}
+          path:            ${{ steps.render.outputs.card_path }}
+          if-no-files-found: error
+          retention-days:  ${{ inputs.branding_preview_artifact_retention_days }}
+
+      - name: Job summary
+        if: always()
+        env:
+          CARD_PATH:     ${{ steps.render.outputs.card_path }}
+          ICON:          ${{ steps.render.outputs.icon }}
+          COLOR:         ${{ steps.render.outputs.color }}
+          ARTIFACT_NAME: ${{ inputs.branding_preview_artifact_name }}
+        run: |
+          {
+            echo "## Marketplace branding preview"
+            echo ""
+            echo "| Field    | Value |"
+            echo "|----------|-------|"
+            echo "| Icon     | \`${ICON:-?}\` |"
+            echo "| Color    | \`${COLOR:-?}\` |"
+            echo "| Artifact | \`${ARTIFACT_NAME}\` (download via the run's **Artifacts** section) |"
+          } >> "${GITHUB_STEP_SUMMARY}"
