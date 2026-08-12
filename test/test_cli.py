@@ -166,6 +166,8 @@ def test_posture_writes_skips_json_sidecar(monkeypatch, tmp_path: Path):
     assert rc == 0
     assert skips_path.exists()
     payload = json.loads(skips_path.read_text())
+    assert "findings" in payload
+    assert isinstance(payload["findings"], list)
     assert "skips" in payload
     assert isinstance(payload["skips"], list)
     # No token + no live API → no API-driven probe emits a skip; PS000

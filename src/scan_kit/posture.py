@@ -300,17 +300,35 @@ class AuditResult:
             lines.append(f"### {header}")
             lines.append(f"_{blurb}_")
             lines.append("")
-            lines.append("| Rule | Severity | Location | Control | Evidence | Recommended Remediation |")
-            lines.append("| ---- | -------- | -------- | ------- | -------- | ----------------------- |")
-            for f in rows:
-                location = f.location or "—"
-                title = f.title or "—"
-                remediation = _display_remediation(f)
-                lines.append(
-                    f"| `{f.rule_id}` | {_severity_label(f.severity)} | {_md_escape(location)} | "
-                    f"{_md_escape(title)} | {_md_escape(f.message)} | {_md_escape(remediation)} |"
-                )
-            lines.append("")
+            attention = [f for f in rows if f.severity != "pass"]
+            passed = [f for f in rows if f.severity == "pass"]
+            if attention:
+                lines.append("#### Findings Requiring Attention")
+                lines.append("")
+                lines.append("| Rule | Severity | Location | Control | Evidence | Recommended Remediation |")
+                lines.append("| ---- | -------- | -------- | ------- | -------- | ----------------------- |")
+                for f in attention:
+                    location = f.location or "—"
+                    title = f.title or "—"
+                    remediation = _display_remediation(f)
+                    lines.append(
+                        f"| `{f.rule_id}` | {_severity_label(f.severity)} | {_md_escape(location)} | "
+                        f"{_md_escape(title)} | {_md_escape(f.message)} | {_md_escape(remediation)} |"
+                    )
+                lines.append("")
+            if passed:
+                lines.append("#### Passed Controls")
+                lines.append("")
+                lines.append("| Rule | Severity | Location | Control | Evidence |")
+                lines.append("| ---- | -------- | -------- | ------- | -------- |")
+                for f in passed:
+                    location = f.location or "—"
+                    title = f.title or "—"
+                    lines.append(
+                        f"| `{f.rule_id}` | {_severity_label(f.severity)} | {_md_escape(location)} | "
+                        f"{_md_escape(title)} | {_md_escape(f.message)} |"
+                    )
+                lines.append("")
 
         misc = buckets.get(-1)
         if misc:

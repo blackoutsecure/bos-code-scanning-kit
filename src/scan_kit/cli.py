@@ -213,6 +213,7 @@ def cmd_posture(args: argparse.Namespace) -> int:
         # so the outer composite has no other way to learn that probes
         # ran in indeterminate mode.
         skip_payload = {
+            "findings": [f.to_dict() for f in result.findings],
             "skips": [
                 {
                     "rule_id": f.rule_id,
