@@ -65,12 +65,11 @@ inputs:
     description: >-
       Token used by the posture audit (PS001 code scanning, PS002 secret
       scanning, PS003 Dependabot alerts, PS020-PS025 branch protection).
-      Leave empty to fall back to the workflow's built-in GITHUB_TOKEN,
-      which is enough for PS001 only. PS002/PS003/PS020-PS025 require a
-      PAT with admin reach — by org convention stored as a secret named
-      `SCANNING_PAT`. See the kit README § 'SCANNING_PAT — advanced
-      posture credentials' for the classic / fine-grained tick checklist
-      and the recommended caller pattern.
+      Leave empty to fall back to the workflow's built-in GITHUB_TOKEN.
+      That baseline token can confirm code-scanning visibility, but checks
+      for secret scanning, Dependabot alerts, and branch protection need
+      a `SCANNING_PAT` secret passed through this input. Follow the official
+      walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough
     required: false
     default: ''
 
@@ -599,18 +598,38 @@ runs:
                         msg = (s.get("message") or "").replace("|", "\\|")
                         loc = (s.get("location") or "—").replace("|", "\\|")
                         fh.write(f"| `{rid}` | {msg} | {loc} |\n")
+                    fh.write("\n#### How to unlock full posture checks\n\n")
                     fh.write(
-                        "\n_To upgrade these to real pass/fail rows, "
-                        "configure `SCANNING_PAT` (classic `repo`, or "
-                        "fine-grained with Administration + Security "
-                        "events + Metadata read) and pass it via the "
-                        "`github_token:` input. See the kit README § "
-                        "'SCANNING_PAT — advanced posture credentials'._\n"
+                      "Skipped rows mean the default `GITHUB_TOKEN` could not "
+                      "read an admin-protected GitHub setting. To turn these "
+                      "rows into real `pass`, `warn`, or `fail` results:\n\n"
+                    )
+                    fh.write(
+                      "1. Create a repository or organization secret named "
+                      "`SCANNING_PAT`.\n"
+                    )
+                    fh.write(
+                      "2. Use a classic PAT with `repo`, or a fine-grained "
+                      "PAT with Administration, Security events, and Metadata "
+                      "read access for this repository.\n"
+                    )
+                    fh.write(
+                      "3. Pass it to the kit with `github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}`.\n\n"
+                    )
+                    fh.write(
+                      "Follow the official walkthrough in the "
+                      "[Blackout Secure Code Scanning Kit README]"
+                      "(https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough).\n"
                     )
 
                 if os.environ.get("ENABLE_UPLOAD") == "true" and os.environ.get("SARIF_PATH"):
-                    fh.write("\nMerged SARIF uploaded to the repo Security tab "
-                             "under category `bos-code-scanning-kit`.\n")
+                    fh.write("\n### SARIF upload\n\n")
+                    fh.write(
+                      "The merged SARIF report was uploaded to this repository's "
+                      "**Security** tab under the category `bos-code-scanning-kit`. "
+                      "Open **Security → Code scanning alerts** to review, assign, "
+                      "dismiss, or track the findings over time.\n"
+                    )
 
         out = os.environ.get("GITHUB_OUTPUT")
         if out:

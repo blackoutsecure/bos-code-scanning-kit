@@ -54,7 +54,7 @@ required reviews, and CODEOWNERS for every branch you care about.
   `${{ secrets.GITHUB_TOKEN }}` is enough for the code-scanning probe
   (`PS001`). Secret-scanning (`PS002`), Dependabot (`PS003`), and
   branch-protection probes (`PS020`-`PS025`) require a PAT — see
-  [SCANNING_PAT — advanced posture credentials](#-scanning_pat--advanced-posture-credentials)
+  [SCANNING_PAT — advanced posture credentials walkthrough](#scanning_pat--advanced-posture-credentials-walkthrough)
   for the full tick / don't-tick checklist (classic and fine-grained).
 - For the **SARIF upload**: `security-events: write` in your workflow
   `permissions:` block.
@@ -127,7 +127,7 @@ the `commit` field of the GitHub Release JSON.
 | `owner` | _(none)_ | GitHub owner of the repo being scanned. Defaults to the workflow context. |
 | `repo` | _(none)_ | GitHub repo name being scanned. Defaults to the workflow context. |
 | `config` | _(none)_ | Path to `.bos-scan.yml`. Defaults to auto-discovery at the repo root. |
-| `github_token` | _(none)_ | Token used by the posture audit (PS001 code scanning, PS002 secret scanning, PS003 Dependabot alerts, PS020-PS025 branch protection). Leave empty to fall back to the workflow's built-in GITHUB_TOKEN, which is enough for PS001 only. PS002/PS003/PS020-PS025 require a PAT with admin reach — by org convention stored as a secret named `SCANNING_PAT`. See the kit README § 'SCANNING_PAT — advanced posture credentials' for the classic / fine-grained tick checklist and the recommended caller pattern. |
+| `github_token` | _(none)_ | Token used by the posture audit (PS001 code scanning, PS002 secret scanning, PS003 Dependabot alerts, PS020-PS025 branch protection). Leave empty to fall back to the workflow's built-in GITHUB_TOKEN. That baseline token can confirm code-scanning visibility, but checks for secret scanning, Dependabot alerts, and branch protection need a `SCANNING_PAT` secret passed through this input. Follow the official walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough |
 | `enable_posture` | `true` | `true` to run the posture audit step. |
 | `enable_scanners` | `true` | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck). |
 | `enable_upload` | `true` | `true` to upload the merged SARIF to GitHub Advanced Security. |
@@ -150,31 +150,41 @@ the `commit` field of the GitHub Release JSON.
 | `outcome` | Severity-tier verdict for the run: `success` (no findings at any level), `warn` (only warning/note-level findings — nothing the enforcement policy would block on), or `failure` (at least one error-level finding from the posture audit or any scanner). Reflects severity only — it does NOT change based on `fail_on`, so callers can gate pipelines on the verdict independently of whether the kit step itself exited non-zero. |
 <!-- END action-outputs -->
 
-## SCANNING_PAT guidance
+## SCANNING_PAT — advanced posture credentials walkthrough
 
-The posture audit can run with either:
+The posture audit can run in two modes:
 
-- `secrets.GITHUB_TOKEN` (baseline visibility)
-- `secrets.SCANNING_PAT` (recommended for full posture coverage)
+- `secrets.GITHUB_TOKEN` gives baseline visibility. It can confirm the
+  code-scanning surface, but GitHub blocks several admin-level posture
+  checks from that token.
+- `secrets.SCANNING_PAT` gives full posture coverage when you grant the
+  required repository access and pass it through the action input.
 
-Recommended caller pattern:
+Use this caller pattern in the workflow that runs the kit:
 
 ```yaml
 with:
   github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}
 ```
 
-With only `GITHUB_TOKEN`, rules that require admin-level visibility
-(for example branch protection and some security settings) may emit
-`skip` findings. Using `SCANNING_PAT` upgrades those to real
-`pass`/`warn`/`fail` evaluations.
+With only `GITHUB_TOKEN`, checks that require admin-level visibility
+(for example secret scanning, Dependabot alerts, and branch protection)
+may appear as `skip` / `Not Assessed` rows. That means the kit could not
+collect enough evidence for a real verdict. Adding `SCANNING_PAT`
+upgrades those rows to real `pass`, `warn`, or `fail` evaluations.
 
-Minimum PAT guidance:
+Walkthrough:
 
-- Fine-grained PAT (preferred): grant read access only to the selected
-  repositories and security/admin metadata needed by posture checks.
-- Classic PAT (fallback): `repo` scope.
-- Store as an Actions secret named `SCANNING_PAT`.
+1. Create a PAT for the repositories you want to audit.
+2. Preferred: use a fine-grained PAT scoped only to the selected repos.
+3. Grant the PAT read access for repository metadata plus the security
+   and administration surfaces needed by posture checks.
+4. Fallback: use a classic PAT with `repo` scope.
+5. Store the token as an Actions secret named `SCANNING_PAT` at the org
+   or repository level.
+6. Pass the token with `github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}`.
+7. Re-run the workflow and confirm previously skipped rows now show
+   `pass`, `warn`, or `fail`.
 
 ## Posture rule reference
 
