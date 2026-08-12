@@ -27,7 +27,7 @@ run-name: >-
         description: Marketplace operation.
         required: true
         type: choice
-        options: [validate, name-check, release, metadata]
+        options: [validate, name-check, release]
         default: validate
       tag_name:
         description: Optional SemVer release tag; empty auto-bumps the latest stable tag.
@@ -35,7 +35,7 @@ run-name: >-
         type: string
         default: ''
       dry_run:
-        description: Preview the selected release or metadata operation without publishing or writing.
+        description: Validate and stage a release without publishing.
         required: false
         type: boolean
         default: false
@@ -175,39 +175,3 @@ jobs:
       release_make_latest: 'true'
       release_generate_notes: true
 
-  metadata:
-    name: Marketplace repository metadata
-    needs: [parse-config, release]
-    if: >-
-      always()
-      && needs.parse-config.result == 'success'
-      && fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.enable == true
-      && (
-        (github.event_name == 'workflow_dispatch' && inputs.operation == 'metadata')
-        || (
-          github.event_name == 'workflow_dispatch'
-          && inputs.operation == 'release'
-          && needs.release.result == 'success'
-          && !inputs.dry_run
-          && !inputs.draft
-        )
-      )
-    permissions:
-      contents: read
-    uses: blackoutsecure/bos-automation-hub/.github/workflows/repo-metadata-sync.yml@main
-    with:
-      checkout_ref: ${{ inputs.operation == 'release' && needs.release.outputs.tag_name || (fromJson(needs.parse-config.outputs.cfg).marketplace.target_branch || 'main') }}
-      description: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.description || '' }}
-      homepage: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.homepage || '' }}
-      topics: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.topics || '' }}
-      generate_topics: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.generate_topics == true }}
-      topics_fallback: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.topics_fallback || '' }}
-      ai_enabled: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.ai_enabled != false }}
-      ai_model: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.ai_model || 'openai/gpt-4o-mini' }}
-      show_releases: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.show_releases != false }}
-      show_deployments: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.show_deployments == true }}
-      show_packages: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.show_packages == true }}
-      dry_run: ${{ inputs.dry_run || fromJson(needs.parse-config.outputs.cfg).marketplace.repo_metadata.dry_run == true }}
-    secrets:
-      REPO_ADMIN_PAT: ${{ secrets.REPO_ADMIN_PAT }}
-      RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
