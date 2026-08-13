@@ -18,7 +18,7 @@ This repository is a Marketplace Action producer.
 - optional post-release repo metadata sync
 
 ## Source of truth
-- Managed behavior config lives in bos-universal-config.json.
+- Managed behavior config lives in .github/bos-universal-config.json.
 - Managed workflow installation/removal is controlled by bos-managed-files.yaml services.
 - Do not hand-edit managed kicker workflow files.
 

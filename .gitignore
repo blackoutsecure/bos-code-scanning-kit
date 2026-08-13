@@ -34,6 +34,7 @@ htmlcov/
 !test/fixtures/**/*.sarif
 /tmp-*
 .bos-scan-cache/
+.hub-automation/
 
 # >>> bos-automation-hub:common >>>
 # Managed by https://github.com/blackoutsecure/bos-automation-hub — do not edit between markers.
