@@ -4,6 +4,18 @@
 # entries need to live here.
 
 # Python
+**/__pycache__/
+**/.venv/
+**/venv/
+**/env/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.tox/
+**/.nox/
+**/.coverage
+**/coverage.xml
+**/htmlcov/
 __pycache__/
 *.py[cod]
 *$py.class
