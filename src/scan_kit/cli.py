@@ -213,6 +213,7 @@ def cmd_posture(args: argparse.Namespace) -> int:
         # so the outer composite has no other way to learn that probes
         # ran in indeterminate mode.
         skip_payload = {
+            "findings": [f.to_dict() for f in result.findings],
             "skips": [
                 {
                     "rule_id": f.rule_id,
@@ -398,82 +399,14 @@ def _print_posture_table(result: posture_mod.AuditResult) -> None:
 
 
 def _write_step_summary(result: posture_mod.AuditResult) -> None:
-    """Append a Markdown table to $GITHUB_STEP_SUMMARY when running in Actions."""
+    """Append a Markdown summary to $GITHUB_STEP_SUMMARY when running in Actions."""
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path:
         return
 
-    # Emoji per severity — renders in the GHA summary UI and gives the
-    # reviewer a fast visual scan equivalent to the console colours.
-    sev_icon = {"pass": "🟢", "warn": "🟡", "fail": "🔴",
-                "error": "🟣", "skip": "⚪"}
-
-    fails = len(result.failed)
-    warns = len(result.warned)
-    passes = len(result.passed)
-    errors = len(result.errored)
-    skips = sum(1 for f in result.findings if f.severity == "skip")
-
-    lines: list[str] = [
-        "## Posture audit",
-        "",
-        f"**Totals:** 🟢 {passes} pass · 🟡 {warns} warn · 🔴 {fails} fail · "
-        f"🟣 {errors} error · ⚪ {skips} skip",
-        "",
-    ]
-
-    if not result.findings:
-        lines.append("_No findings._")
-    else:
-        # Group by rule family for readability — same buckets the console
-        # table uses, so summary + log line up.
-        buckets: dict[int, list] = {}
-        for f in result.findings:
-            buckets.setdefault(_family_for(f.rule_id), []).append(f)
-
-        for idx, (_, header, blurb) in enumerate(_RULE_FAMILIES):
-            rows = buckets.get(idx)
-            if not rows:
-                continue
-            lines.append(f"### {header}")
-            lines.append(f"_{blurb}_")
-            lines.append("")
-            lines.append("| Rule | Severity | Location | Message |")
-            lines.append("| ---- | -------- | -------- | ------- |")
-            for f in rows:
-                icon = sev_icon.get(f.severity, "")
-                lines.append(
-                    f"| `{f.rule_id}` | {icon} {f.severity} | "
-                    f"{_md_escape(f.location) or '—'} | {_md_escape(f.message)} |"
-                )
-            lines.append("")
-
-        misc = buckets.get(-1)
-        if misc:
-            lines.append("### Other")
-            lines.append("")
-            lines.append("| Rule | Severity | Location | Message |")
-            lines.append("| ---- | -------- | -------- | ------- |")
-            for f in misc:
-                icon = sev_icon.get(f.severity, "")
-                lines.append(
-                    f"| `{f.rule_id}` | {icon} {f.severity} | "
-                    f"{_md_escape(f.location) or '—'} | {_md_escape(f.message)} |"
-                )
-            lines.append("")
-
-    if skips:
-        lines.append(
-            "> ⚪ **skip** rows mean the audit could not run that check — "
-            "typically a token-scope limitation. Supply a PAT via "
-            "`github_token:` (org convention: `SCANNING_PAT`) to upgrade "
-            "to pass/fail."
-        )
-        lines.append("")
-
     try:
         with Path(summary_path).open("a", encoding="utf-8") as fh:
-            fh.write("\n".join(lines) + "\n")
+            fh.write(result.summary_markdown())
     except OSError:
         pass
 

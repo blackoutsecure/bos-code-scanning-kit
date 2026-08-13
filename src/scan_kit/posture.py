@@ -28,7 +28,7 @@ import re
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,131 @@ from .config import (
 
 SEVERITIES = ("pass", "fail", "warn", "skip", "error")
 
+# Rule-family display order — drives the section banners in the
+# posture table. Keys are PS-id prefixes, values are (header, blurb).
+_RULE_FAMILIES: tuple[tuple[str, str, str], ...] = (
+    ("PS00", "GHAS toggles",         "Code scanning, secret scanning, Dependabot, push protection"),
+    ("PS01", "Workflow permissions", "Per-file audit of `.github/workflows/*.yml`"),
+    ("PS02", "Branch protection",    "Required reviews, status checks, conversation resolution"),
+    ("PS03", "CODEOWNERS",           "Repo-level review routing"),
+)
+
+
+def _family_for(rule_id: str) -> int:
+    """Return the `_RULE_FAMILIES` index for a finding (-1 = uncategorised)."""
+    for i, (prefix, _, _) in enumerate(_RULE_FAMILIES):
+        if rule_id.startswith(prefix):
+            return i
+    return -1
+
+
+def _md_escape(text: str) -> str:
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
+def _severity_label(severity: str) -> str:
+    labels = {
+        "pass": "Pass",
+        "warn": "Warning",
+        "fail": "High",
+        "error": "Critical",
+        "skip": "Not Assessed",
+    }
+    return labels.get(severity, severity.title())
+
+
+def _audit_verdict(totals: dict[str, int]) -> tuple[str, str]:
+    if totals["error"]:
+        return (
+            "Critical attention required",
+            "One or more audit controls could not complete cleanly. Review error rows before relying on the final posture result.",
+        )
+    if totals["fail"]:
+        return (
+            "Action required",
+            "One or more required security controls did not meet the configured policy.",
+        )
+    if totals["warn"]:
+        return (
+            "Advisory review recommended",
+            "No blocking failures were detected, but one or more controls should be reviewed and tightened.",
+        )
+    if totals["skip"] and not totals["pass"]:
+        return (
+            "Assessment limited",
+            "The audit did not produce a definitive pass/fail result for the selected controls.",
+        )
+    return (
+        "Controls passed",
+        "No failing or warning-level posture findings were detected by the configured audit controls.",
+    )
+
+
+def _recommended_actions(totals: dict[str, int]) -> list[str]:
+    actions: list[str] = []
+    if totals["error"]:
+        actions.append("Resolve audit errors first; they indicate incomplete evidence collection or an execution issue.")
+    if totals["fail"]:
+        actions.append("Remediate High findings before treating this repository as policy-compliant.")
+    if totals["warn"]:
+        actions.append("Review Warning findings during the next hardening cycle and document any accepted risk.")
+    if totals["skip"]:
+        actions.append("Re-run with the required token scopes, such as a scoped `SCANNING_PAT`, to convert Not Assessed checks into pass/fail evidence.")
+    if not actions:
+        actions.append("Maintain the current controls and keep this audit in the release or pull-request evidence trail.")
+    actions.append("Review the SARIF upload in GitHub code scanning for durable finding history and alert triage.")
+    return actions
+
+
+def _display_remediation(finding: "Finding") -> str:
+    if finding.severity == "pass":
+        return "—"
+    return finding.remediation or "—"
+
+
+def _default_finding_title(rule_id: str) -> str:
+    titles = {
+        "PS001": "Code scanning is enabled",
+        "PS002": "Secret scanning is enabled",
+        "PS003": "Vulnerability alerts are enabled",
+        "PS004": "Push protection is enabled",
+        "PS010": "Workflow permissions are declared",
+        "PS011": "Workflow write access is restricted",
+        "PS012": "Actions are pinned to immutable refs",
+        "PS013": "Microsoft Security DevOps is configured",
+        "PS020": "Branch protection is configured",
+        "PS021": "Required reviews are enforced",
+        "PS022": "Force pushes are restricted",
+        "PS023": "Required status checks are enforced",
+        "PS024": "Signed commits are required",
+        "PS025": "Conversation resolution is required",
+        "PS030": "CODEOWNERS file is present",
+        "PS031": "CODEOWNERS entries are valid",
+        "PS032": "CODEOWNERS team owners exist",
+        "PS033": "CODEOWNERS user owners exist",
+    }
+    return titles.get(rule_id, f"Finding {rule_id}")
+
+
+def _default_finding_remediation(rule_id: str, message: str) -> str:
+    if rule_id == "PS001":
+        return "Enable GitHub code scanning via Default setup or Advanced setup and ensure a supported CodeQL workflow is configured."
+    if rule_id == "PS002":
+        return "Turn on GitHub secret scanning for the repository and review any existing alerts that should be remediated."
+    if rule_id == "PS003":
+        return "Enable Dependabot vulnerability alerts and configure automated dependency updates for the repository."
+    if rule_id == "PS004":
+        return "Enable secret-scanning push protection in repository security settings to block secrets before they are pushed."
+    if rule_id.startswith("PS01"):
+        return "Add or tighten the workflow permission block so the job only has the minimum required GitHub token permissions."
+    if rule_id.startswith("PS012"):
+        return "Pin third-party GitHub Action references to a fully qualified commit SHA and avoid floating tags or branches."
+    if rule_id.startswith("PS02"):
+        return "Configure branch protection rules for the target branch, including required reviews and status checks where appropriate."
+    if rule_id.startswith("PS03"):
+        return "Add a CODEOWNERS file or correct invalid owners so every relevant path is covered by a valid reviewer."
+    return message or "Review the repository configuration and apply the required security controls."
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -54,6 +179,38 @@ class Finding:
     severity: str            # one of SEVERITIES
     message: str
     location: str = ""       # e.g. ".github/workflows/foo.yml" or "branch:main"
+    title: str = ""
+    source: str = "posture"
+    evidence: dict[str, Any] = field(default_factory=dict)
+    remediation: str = ""
+    remediation_confidence: str = "deterministic"
+    remediation_source: str = "Blackout Secure Recommended Remediation"
+    provider: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.title:
+            object.__setattr__(self, "title", _default_finding_title(self.rule_id))
+        if not self.remediation:
+            object.__setattr__(self, "remediation", _default_finding_remediation(self.rule_id, self.message))
+        if not self.source:
+            object.__setattr__(self, "source", "posture")
+        if not self.remediation_source:
+            object.__setattr__(self, "remediation_source", "Blackout Secure Recommended Remediation")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rule_id": self.rule_id,
+            "severity": self.severity,
+            "title": self.title,
+            "message": self.message,
+            "source": self.source,
+            "location": self.location,
+            "evidence": dict(self.evidence or {}),
+            "remediation": self.remediation,
+            "remediation_confidence": self.remediation_confidence,
+            "remediation_source": self.remediation_source,
+            "provider": self.provider,
+        }
 
 
 @dataclass(frozen=True)
@@ -75,6 +232,136 @@ class AuditResult:
     @property
     def errored(self) -> tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.severity == "error")
+
+    def totals(self) -> dict[str, int]:
+        return {
+            "pass": len(self.passed),
+            "warn": len(self.warned),
+            "fail": len(self.failed),
+            "error": len(self.errored),
+            "skip": sum(1 for f in self.findings if f.severity == "skip"),
+        }
+
+    def summary_markdown(self) -> str:
+        totals = self.totals()
+        verdict, verdict_detail = _audit_verdict(totals)
+        lines: list[str] = [
+            "# Blackout Secure Code Scanning Kit Audit Report",
+            "",
+            "**Provided by [Blackout Secure](https://blackoutsecure.app)**",
+            "",
+            "## Summary",
+            "",
+            f"**Verdict:** {_md_escape(verdict)}",
+            "",
+            verdict_detail,
+            "",
+            f"**Totals:** {totals['pass']} pass · {totals['warn']} warning · "
+            f"{totals['fail']} high · {totals['error']} critical · {totals['skip']} not assessed",
+            "",
+            "| Severity | Count | Meaning |",
+            "| -------- | ----- | ------- |",
+            f"| Pass | {totals['pass']} | Control satisfied the configured policy. |",
+            f"| Warning | {totals['warn']} | Review recommended; not usually a hard block by itself. |",
+            f"| High | {totals['fail']} | Required control failed and should be remediated. |",
+            f"| Critical | {totals['error']} | Audit execution or evidence collection error. |",
+            f"| Not Assessed | {totals['skip']} | Check was skipped or lacked sufficient token scope/evidence. |",
+            "",
+            "## Recommended Actions",
+            "",
+        ]
+        for action in _recommended_actions(totals):
+            lines.append(f"- {action}")
+        lines.append("")
+        lines.extend([
+            "## Scope and Methodology",
+            "",
+            "This automated audit reviews repository security posture controls exposed through GitHub repository configuration, workflow definitions, branch protection, CODEOWNERS, and GitHub Advanced Security settings. Results are evidence-based at run time and are intended to support release, compliance, and engineering risk review.",
+            "",
+        ])
+
+        if not self.findings:
+            lines.append("## Detailed Findings")
+            lines.append("")
+            lines.append("_No findings were emitted by the configured audit controls._")
+            return "\n".join(lines) + "\n"
+
+        buckets: dict[int, list[Finding]] = {}
+        for f in self.findings:
+            buckets.setdefault(_family_for(f.rule_id), []).append(f)
+
+        for idx, (_, header, blurb) in enumerate(_RULE_FAMILIES):
+            rows = buckets.get(idx)
+            if not rows:
+                continue
+            if not any(line == "## Detailed Findings" for line in lines):
+                lines.append("## Detailed Findings")
+                lines.append("")
+            lines.append(f"### {header}")
+            lines.append(f"_{blurb}_")
+            lines.append("")
+            attention = [f for f in rows if f.severity != "pass"]
+            passed = [f for f in rows if f.severity == "pass"]
+            if attention:
+                lines.append("#### Findings Requiring Attention")
+                lines.append("")
+                lines.append("| Rule | Severity | Location | Control | Evidence | Recommended Remediation |")
+                lines.append("| ---- | -------- | -------- | ------- | -------- | ----------------------- |")
+                for f in attention:
+                    location = f.location or "—"
+                    title = f.title or "—"
+                    remediation = _display_remediation(f)
+                    lines.append(
+                        f"| `{f.rule_id}` | {_severity_label(f.severity)} | {_md_escape(location)} | "
+                        f"{_md_escape(title)} | {_md_escape(f.message)} | {_md_escape(remediation)} |"
+                    )
+                lines.append("")
+            if passed:
+                lines.append("#### Passed Controls")
+                lines.append("")
+                lines.append("| Rule | Severity | Location | Control | Evidence |")
+                lines.append("| ---- | -------- | -------- | ------- | -------- |")
+                for f in passed:
+                    location = f.location or "—"
+                    title = f.title or "—"
+                    lines.append(
+                        f"| `{f.rule_id}` | {_severity_label(f.severity)} | {_md_escape(location)} | "
+                        f"{_md_escape(title)} | {_md_escape(f.message)} |"
+                    )
+                lines.append("")
+
+        misc = buckets.get(-1)
+        if misc:
+            if not any(line == "## Detailed Findings" for line in lines):
+                lines.append("## Detailed Findings")
+                lines.append("")
+            lines.append("### Other Findings")
+            lines.append("")
+            lines.append("| Rule | Severity | Location | Control | Evidence | Recommended Remediation |")
+            lines.append("| ---- | -------- | -------- | ------- | -------- | ----------------------- |")
+            for f in misc:
+                remediation = _display_remediation(f)
+                lines.append(
+                    f"| `{f.rule_id}` | {_severity_label(f.severity)} | {_md_escape(f.location or '—')} | "
+                    f"{_md_escape(f.title or '—')} | {_md_escape(f.message)} | {_md_escape(remediation)} |"
+                )
+            lines.append("")
+
+        if totals["skip"]:
+            lines.append(
+                "> ⚪ **skip** rows mean the audit could not run that check — "
+                "typically a token-scope limitation or a safe opt-out."
+            )
+            lines.append("")
+
+        lines.extend([
+            "---",
+            "",
+            "_This report was generated by Blackout Secure Code Scanning Kit. Validate compensating controls and accepted risks through your organization's normal security review process._",
+            "",
+        ])
+
+        return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------

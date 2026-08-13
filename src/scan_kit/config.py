@@ -118,6 +118,13 @@ class PostureConfig:
 
 
 @dataclass(frozen=True)
+class RemediationConfig:
+    enable_ai_findings_summary: bool = False
+    ai_findings_summary_provider: str = ""
+    local_heuristic_fallback: bool = True
+
+
+@dataclass(frozen=True)
 class Config:
     # Cross-kit owner/project metadata (shared with bos-marketplace-kit).
     owner: str = ""
@@ -126,6 +133,7 @@ class Config:
 
     scan: ScanConfig = field(default_factory=ScanConfig)
     posture: PostureConfig = field(default_factory=PostureConfig)
+    remediation: RemediationConfig = field(default_factory=RemediationConfig)
 
     # Path the config was loaded from (empty when defaults were used).
     source_path: str = ""
@@ -180,6 +188,7 @@ def _from_dict(doc: dict[str, Any], *, source_path: str = "") -> Config:
 
     scan = _scan_from_dict(_dict(doc, "scan"))
     posture = _posture_from_dict(_dict(doc, "posture"))
+    remediation = _remediation_from_dict(_dict(doc, "remediation"))
 
     return Config(
         owner=owner,
@@ -187,6 +196,7 @@ def _from_dict(doc: dict[str, Any], *, source_path: str = "") -> Config:
         email=email,
         scan=scan,
         posture=posture,
+        remediation=remediation,
         source_path=source_path,
     )
 
@@ -291,6 +301,14 @@ def _branch_from_dict(d: dict[str, Any], *, branch_name: str) -> BranchPosture:
         require_status_checks=_bool(d, "require_status_checks", True),
         require_conversation_resolution=_bool(d, "require_conversation_resolution", False),
         severity=_severity(d, "severity", "warn"),
+    )
+
+
+def _remediation_from_dict(d: dict[str, Any]) -> RemediationConfig:
+    return RemediationConfig(
+        enable_ai_findings_summary=_bool(d, "enable_ai_findings_summary", False),
+        ai_findings_summary_provider=_str(d, "ai_findings_summary_provider", ""),
+        local_heuristic_fallback=_bool(d, "local_heuristic_fallback", True),
     )
 
 

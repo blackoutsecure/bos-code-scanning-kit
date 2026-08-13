@@ -63,14 +63,13 @@ inputs:
   # the `github.token` fallback is applied at the step level instead.
   github_token:
     description: >-
-      Token used by the posture audit (PS001 code scanning, PS002 secret
-      scanning, PS003 Dependabot alerts, PS020-PS025 branch protection).
-      Leave empty to fall back to the workflow's built-in GITHUB_TOKEN,
-      which is enough for PS001 only. PS002/PS003/PS020-PS025 require a
-      PAT with admin reach — by org convention stored as a secret named
-      `SCANNING_PAT`. See the kit README § 'SCANNING_PAT — advanced
-      posture credentials' for the classic / fine-grained tick checklist
-      and the recommended caller pattern.
+      GitHub token for the posture audit. Leave blank to use the workflow's
+      built-in GITHUB_TOKEN for baseline checks. For full posture coverage,
+      create a `SCANNING_PAT` secret and pass it here with
+      `github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}`.
+      The PAT lets the kit verify admin-gated controls such as secret scanning,
+      Dependabot alerts, and branch protection instead of reporting them as
+      skipped. Walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough
     required: false
     default: ''
 
@@ -443,12 +442,82 @@ runs:
         ENABLE_SCANNERS: ${{ inputs.enable_scanners }}
         ENABLE_UPLOAD:   ${{ inputs.enable_upload }}
         FAIL_ON:         ${{ inputs.fail_on }}
+        TOKEN_INPUT_SUPPLIED: ${{ inputs.github_token != '' && 'true' || 'false' }}
         SARIF_PATH:      ${{ steps.merge.outputs.sarif_path }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}"
         python3 - <<'PY'
         import json, os, pathlib
+
+        def md_escape(value):
+            return str(value).replace("|", "\\|").replace("\n", " ")
+
+        def enabled(value):
+            return "enabled" if str(value).lower() == "true" else "disabled"
+
+        def result_location(result):
+          locations = result.get("locations") or []
+          if not locations:
+            return "—"
+          loc = locations[0]
+          physical = loc.get("physicalLocation") or {}
+          artifact = physical.get("artifactLocation") or {}
+          uri = artifact.get("uri") or ""
+          region = physical.get("region") or {}
+          line = region.get("startLine")
+          logical = loc.get("logicalLocations") or []
+          if uri and line:
+            return f"{uri}:{line}"
+          if uri:
+            return uri
+          if logical:
+            return logical[0].get("name") or "—"
+          return "—"
+
+        def recommendation_for(source, result, rule_help=""):
+          rule_id = result.get("ruleId") or ""
+          if source == "Posture audit":
+            return rule_help or "Review the posture finding and apply the configured repository control."
+          if source == "actionlint":
+            return "Fix the workflow syntax/expression issue reported by actionlint."
+          if source == "gitleaks":
+            return "Rotate the exposed secret, remove it from history if needed, and add a safe secret-management path."
+          if source == "shellcheck":
+            return "Review the ShellCheck finding and update the shell script for safer quoting, flow control, or portability."
+          return rule_help or f"Review `{rule_id}` in the SARIF/code-scanning alert and apply the tool recommendation."
+
+        def sarif_results(source, path):
+          p = pathlib.Path(path)
+          if not p.exists() or p.stat().st_size == 0:
+            return []
+          try:
+            doc = json.loads(p.read_text())
+          except Exception:
+            return []
+          rows = []
+          for run in doc.get("runs", []):
+            rules = {
+              rule.get("id"): (
+                (rule.get("shortDescription") or {}).get("text")
+                or (rule.get("fullDescription") or {}).get("text")
+                or ""
+              )
+              for rule in (run.get("tool", {}).get("driver", {}).get("rules") or [])
+            }
+            for result in run.get("results", []):
+              rule_id = result.get("ruleId") or "unknown"
+              message = (result.get("message") or {}).get("text") or "No message provided."
+              level = result.get("level") or "warning"
+              rows.append({
+                "source": source,
+                "rule_id": rule_id,
+                "severity": level,
+                "location": result_location(result),
+                "message": message,
+                "recommendation": recommendation_for(source, result, rules.get(rule_id, "")),
+              })
+          return rows
 
         scanners = [
             ("Posture audit", "bos-scan-posture.sarif",    os.environ.get("ENABLE_POSTURE")  == "true"),
@@ -471,17 +540,21 @@ runs:
                     else:                 n += 1
             return (e, w, n)
 
-        # Posture skips sidecar — SARIF drops `skip` findings (rightly,
-        # they're not actionable in the Security tab), so without this
-        # file the consolidated summary cannot tell that probes ran in
-        # indeterminate mode. Each entry: {rule_id, message, location}.
+        # Posture sidecar — SARIF drops `pass` and `skip` findings
+        # (rightly, they are not actionable in the Security tab), so
+        # this JSON sidecar carries the full posture evidence for the
+        # all-up audit report.
         skips = []
+        posture_findings = []
         skips_path = pathlib.Path("bos-scan-posture-skips.json")
         if skips_path.exists() and skips_path.stat().st_size > 0:
-            try:
-                skips = json.loads(skips_path.read_text()).get("skips", []) or []
-            except Exception:
-                skips = []
+          try:
+            posture_sidecar = json.loads(skips_path.read_text())
+            skips = posture_sidecar.get("skips", []) or []
+            posture_findings = posture_sidecar.get("findings", []) or []
+          except Exception:
+            skips = []
+            posture_findings = []
 
         rows = []
         any_err = any_find = False
@@ -540,6 +613,81 @@ runs:
         else:
             verdict = "No findings detected."
 
+        token_supplied = os.environ.get("TOKEN_INPUT_SUPPLIED") == "true"
+        if not os.environ.get("ENABLE_POSTURE") == "true":
+            token_mode = "not used"
+            token_capability = "Posture audit disabled; no GitHub posture APIs queried."
+        elif token_supplied:
+            token_mode = "github_token input supplied"
+            token_capability = (
+                "Full posture coverage if the supplied token has the required repository permissions; "
+                "check skipped probes below for any missing access."
+            )
+        else:
+            token_mode = "workflow GITHUB_TOKEN fallback"
+            token_capability = (
+                "Baseline coverage. Admin-gated controls such as secret scanning, Dependabot alerts, "
+                "and branch protection may report as skipped."
+            )
+
+        if skips:
+            observed_coverage = f"limited: {len(skips)} admin-gated probe(s) were not assessed"
+        elif os.environ.get("ENABLE_POSTURE") == "true":
+            observed_coverage = "no skipped posture probes observed in this run"
+        else:
+            observed_coverage = "not applicable"
+
+        upload_enabled = os.environ.get("ENABLE_UPLOAD") == "true"
+        sarif_path = os.environ.get("SARIF_PATH") or "not produced"
+        config_rows = [
+            ("Posture audit", enabled(os.environ.get("ENABLE_POSTURE")), "Checks GitHub security settings, workflows, branch protection, and CODEOWNERS."),
+            ("Bundled scanners", enabled(os.environ.get("ENABLE_SCANNERS")), "Runs actionlint, gitleaks, and shellcheck when matching files are present."),
+            ("SARIF upload", enabled(os.environ.get("ENABLE_UPLOAD")), f"{'Uploads' if upload_enabled else 'Does not upload'} merged findings to Code scanning category `bos-code-scanning-kit`; path: `{sarif_path}`."),
+            ("Failure policy", f"`{fail_on}`", "`fail` blocks on failure findings; `never` keeps the run advisory."),
+            ("Token mode", token_mode, token_capability),
+            ("Observed posture coverage", observed_coverage, "Use `SCANNING_PAT` if admin-gated checks are skipped."),
+        ]
+
+        all_annotations = []
+        for source, sarif_name, stage_enabled in scanners:
+            if stage_enabled:
+                all_annotations.extend(sarif_results(source, sarif_name))
+
+        scanner_annotations = [r for r in all_annotations if r["source"] != "Posture audit"]
+        posture_attention = [f for f in posture_findings if f.get("severity") not in ("pass", "skip")]
+        posture_passed = [f for f in posture_findings if f.get("severity") == "pass"]
+        posture_skipped = [f for f in posture_findings if f.get("severity") == "skip"]
+        attention_rows = []
+        for finding in posture_attention:
+            attention_rows.append({
+                "source": "Posture audit",
+                "rule_id": finding.get("rule_id", "unknown"),
+                "severity": finding.get("severity", "warn"),
+                "location": finding.get("location") or "—",
+                "message": finding.get("message") or "No message provided.",
+                "recommendation": finding.get("remediation") or "Review and remediate this posture control.",
+            })
+        attention_rows.extend(all_annotations)
+
+        report_recommendations = []
+        if any(r["severity"] in ("error", "fail") for r in attention_rows) or any(r["severity"] == "error" for r in all_annotations):
+            report_recommendations.append("Prioritize High/Critical rows before treating this repository as compliant.")
+        if scanner_annotations:
+            report_recommendations.append("Review scanner annotations in the SARIF upload and either remediate or document accepted risk.")
+        if skips:
+            report_recommendations.append("Provision `SCANNING_PAT` to convert Not Assessed posture checks into evidence-backed pass/warn/fail results.")
+        if not report_recommendations:
+            report_recommendations.append("No immediate remediation is required by the configured controls; keep this report with the release evidence trail.")
+
+        def write_table(fh, headers, records, row_fn, empty):
+            if not records:
+                fh.write(f"_{empty}_\n")
+                return
+            fh.write("| " + " | ".join(headers) + " |\n")
+            fh.write("|" + "|".join("---" for _ in headers) + "|\n")
+            for record in records:
+                fh.write("| " + " | ".join(md_escape(value) for value in row_fn(record)) + " |\n")
+
         # ─── Console echo ────────────────────────────────────────────
         # Mirror the per-stage table + outcome to the runner log too.
         # GitHub Actions renders ANSI sequences verbatim, so colour the
@@ -570,21 +718,73 @@ runs:
                 rid = s.get("rule_id", "?")
                 msg = s.get("message", "")
                 print(f"    • {rid}: {msg}")
+        print()
+        print(f"  {bold}configuration{reset}:")
+        for setting, value, _ in config_rows:
+            print(f"    {setting}: {value}")
         print(f"  {bold}verdict{reset}: {verdict}")
         print()
 
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary:
             with open(summary, "a", encoding="utf-8") as fh:
-                fh.write(f"## Blackout Secure Code Scanning Kit — {badge}\n\n")
+                fh.write(f"# Blackout Code Scanning Audit Report — {badge}\n\n")
+                fh.write("**Provided by [Blackout Secure](https://blackoutsecure.app)**\n\n")
+                fh.write("## Navigation\n\n")
+                fh.write("- [Executive summary](#executive-summary)\n")
+                fh.write("- [Configuration used](#configuration-used)\n")
+                fh.write("- [Findings requiring attention](#findings-requiring-attention)\n")
+                fh.write("- [Scanner annotations](#scanner-annotations)\n")
+                fh.write("- [Passed posture controls](#passed-posture-controls)\n")
+                fh.write("- [Not assessed checks](#not-assessed-checks)\n")
+                fh.write("- [Recommendations](#recommendations)\n")
+                fh.write("- [SARIF upload](#sarif-upload)\n\n")
+                fh.write("## Executive summary\n\n")
                 fh.write("| Stage | Result | Findings |\n")
                 fh.write("|---|---|---|\n")
                 for label, result, detail in rows:
                     fh.write(f"| {label} | {result} | {detail} |\n")
                 fh.write(f"\n**Outcome:** `{outcome}` — {verdict}\n")
 
+                fh.write("\n### Configuration used\n\n")
+                fh.write("| Setting | Value | What it means |\n")
+                fh.write("|---|---|---|\n")
+                for setting, value, meaning in config_rows:
+                    fh.write(
+                        f"| {md_escape(setting)} | {md_escape(value)} | {md_escape(meaning)} |\n"
+                    )
+
+                fh.write("\n### Findings requiring attention\n\n")
+                write_table(
+                    fh,
+                    ["Source", "Rule", "Severity", "Location", "Evidence", "Recommended remediation"],
+                    attention_rows,
+                    lambda r: [r["source"], f"`{r['rule_id']}`", r["severity"], r["location"], r["message"], r["recommendation"]],
+                    "No failing, warning, or scanner annotation rows were found.",
+                )
+
+                fh.write("\n<details>\n<summary>Scanner annotations</summary>\n\n")
+                write_table(
+                    fh,
+                    ["Tool", "Rule", "Severity", "Location", "Annotation", "Recommended remediation"],
+                    scanner_annotations,
+                    lambda r: [r["source"], f"`{r['rule_id']}`", r["severity"], r["location"], r["message"], r["recommendation"]],
+                    "No scanner annotations were emitted by actionlint, gitleaks, or shellcheck.",
+                )
+                fh.write("\n</details>\n")
+
+                fh.write("\n<details open>\n<summary>Passed posture controls</summary>\n\n")
+                write_table(
+                    fh,
+                    ["Rule", "Location", "Control", "Evidence"],
+                    posture_passed,
+                    lambda f: [f"`{f.get('rule_id', 'unknown')}`", f.get("location") or "—", f.get("title") or "Control passed", f.get("message") or "Passed."],
+                    "No passed posture controls were recorded. If posture was disabled, enable it to collect pass evidence.",
+                )
+                fh.write("\n</details>\n")
+
                 if skips:
-                    fh.write("\n### Indeterminate / skipped probes\n\n")
+                    fh.write("\n### Not assessed checks\n\n")
                     fh.write(
                         "These checks ran but could not reach a `pass` or "
                         "`fail` verdict — typically the GitHub token lacks "
@@ -599,18 +799,56 @@ runs:
                         msg = (s.get("message") or "").replace("|", "\\|")
                         loc = (s.get("location") or "—").replace("|", "\\|")
                         fh.write(f"| `{rid}` | {msg} | {loc} |\n")
+                elif posture_skipped:
+                    fh.write("\n### Not assessed checks\n\n")
+                    write_table(
+                        fh,
+                        ["Rule", "Location", "Reason"],
+                        posture_skipped,
+                        lambda f: [f"`{f.get('rule_id', 'unknown')}`", f.get("location") or "—", f.get("message") or "Skipped."],
+                        "No posture checks were skipped.",
+                    )
+                else:
+                    fh.write("\n### Not assessed checks\n\n")
+                    fh.write("_No posture checks were skipped._\n")
+
+                if skips:
+                    fh.write("\n#### How to unlock full posture checks\n\n")
                     fh.write(
-                        "\n_To upgrade these to real pass/fail rows, "
-                        "configure `SCANNING_PAT` (classic `repo`, or "
-                        "fine-grained with Administration + Security "
-                        "events + Metadata read) and pass it via the "
-                        "`github_token:` input. See the kit README § "
-                        "'SCANNING_PAT — advanced posture credentials'._\n"
+                        "Skipped rows mean the default `GITHUB_TOKEN` could not "
+                        "read an admin-protected GitHub setting. To turn these "
+                        "rows into real `pass`, `warn`, or `fail` results:\n\n"
+                    )
+                    fh.write(
+                        "1. Create a repository or organization secret named "
+                        "`SCANNING_PAT`.\n"
+                    )
+                    fh.write(
+                        "2. Use a classic PAT with `repo`, or a fine-grained "
+                        "PAT with Administration, Security events, and Metadata "
+                        "read access for this repository.\n"
+                    )
+                    fh.write(
+                        "3. Pass it to the kit with `github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}`.\n\n"
+                    )
+                    fh.write(
+                        "Follow the official walkthrough in the "
+                        "[Blackout Secure Code Scanning Kit README]"
+                        "(https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough).\n"
                     )
 
+                fh.write("\n### Recommendations\n\n")
+                for recommendation in report_recommendations:
+                    fh.write(f"- {recommendation}\n")
+
                 if os.environ.get("ENABLE_UPLOAD") == "true" and os.environ.get("SARIF_PATH"):
-                    fh.write("\nMerged SARIF uploaded to the repo Security tab "
-                             "under category `bos-code-scanning-kit`.\n")
+                    fh.write("\n### SARIF upload\n\n")
+                    fh.write(
+                        "The merged SARIF report was uploaded to this repository's "
+                        "**Security** tab under the category `bos-code-scanning-kit`. "
+                        "Open **Security → Code scanning alerts** to review, assign, "
+                        "dismiss, or track the findings over time.\n"
+                    )
 
         out = os.environ.get("GITHUB_OUTPUT")
         if out:
