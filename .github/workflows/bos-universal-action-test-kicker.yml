@@ -29,10 +29,6 @@ jobs:
     outputs:
       target_ref: ${{ steps.target-ref.outputs.ref }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
       # `uses:` refs cannot be dynamic, so resolve which hub branch this
       # run targets here and pick the matching static-ref job below.
       - name: Resolve target hub ref
@@ -55,10 +51,7 @@ jobs:
     if: needs.parse-config.outputs.target_ref == 'dev'
     permissions:
       contents: read
-    # Hub dev currently expects action_test output from universal-config@main,
-    # which does not expose that output. Use the promoted reusable until the
-    # central dev workflow updates its normalizer reference.
-    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-action-test.yml@main
+    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-action-test.yml@dev
 
   action-test-main:
     name: action-test (main)

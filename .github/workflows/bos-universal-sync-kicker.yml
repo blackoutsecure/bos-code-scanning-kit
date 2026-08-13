@@ -1,5 +1,5 @@
 # Blackout Secure universal sync kicker (hub-managed).
-# Customize sync defaults in the `global_config_json` input below.
+# Customize via `.github/bos-universal-config.json`, not this file.
 # Schema docs: https://github.com/blackoutsecure/bos-automation-hub
 name: Blackout Secure universal sync (kicker)
 run-name: >-
@@ -29,56 +29,52 @@ permissions:
   contents: read
 
 jobs:
-  sync:
-    name: Sync managed files (${{ inputs.mode || 'commit' }})
+  parse-config:
+    name: Resolve target hub ref
+    runs-on: ${{ fromJSON(startsWith(vars.DEFAULT_RUNNER || 'ubuntu-latest', '[') && (vars.DEFAULT_RUNNER || 'ubuntu-latest') || format('"{0}"', vars.DEFAULT_RUNNER || 'ubuntu-latest')) }}
+    timeout-minutes: 2
+    outputs:
+      target_ref: ${{ steps.target-ref.outputs.ref }}
+    steps:
+      # `uses:` refs cannot be dynamic, so resolve which hub branch this
+      # run targets here and pick the matching static-ref job below.
+      - name: Resolve target hub ref
+        id: target-ref
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          ref="main"
+          [ "${REF_NAME}" = "dev" ] && ref="dev"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+
+  sync-dev:
+    name: Sync managed files (dev)
+    needs: parse-config
     if: >-
       !cancelled()
+      && needs.parse-config.outputs.target_ref == 'dev'
       && (
         github.event_name != 'push'
         || github.ref_name == github.event.repository.default_branch
       )
-    runs-on: ${{ fromJSON(startsWith(vars.DEFAULT_RUNNER || 'ubuntu-latest', '[') && (vars.DEFAULT_RUNNER || 'ubuntu-latest') || format('"{0}"', vars.DEFAULT_RUNNER || 'ubuntu-latest')) }}
-    timeout-minutes: 5
     permissions:
       contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: true
+    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-sync.yml@dev
+    with:
+      mode: ${{ inputs.mode || '' }}
 
-      - name: Sync configured services
-        id: sync
-        uses: blackoutsecure/bos-managed-file-sync-action@v1.0.4
-        with:
-          config_path: .github/bos-universal-config.json
-          global_config_json: >-
-            {
-              "managed_file_sync": {
-                "services": [
-                  "dotfiles",
-                  "shellcheck"
-                ],
-                "exclude_services": [
-                  "dependabot_actions"
-                ],
-                "variables": {
-                  "org_name": "Blackout Secure",
-                  "support_email": "engineering@blackoutsecure.com",
-                  "license": "Apache-2.0"
-                }
-              }
-            }
-          dry_run: ${{ (inputs.mode || 'commit') == 'check' }}
-          fail_on_drift: ${{ (inputs.mode || 'commit') == 'check' }}
-          show_diff: 'true'
-
-      - name: Commit and push
-        if: >-
-          (inputs.mode || 'commit') == 'commit'
-          && steps.sync.outputs.changed == 'true'
-        uses: blackoutsecure/bos-automation-hub/.github/actions/shared/commit-and-push@main
-        with:
-          files: ${{ steps.sync.outputs.changed_files }}
-          message: 'chore: sync managed files'
+  sync-main:
+    name: Sync managed files (main)
+    needs: parse-config
+    if: >-
+      !cancelled()
+      && needs.parse-config.outputs.target_ref == 'main'
+      && (
+        github.event_name != 'push'
+        || github.ref_name == github.event.repository.default_branch
+      )
+    permissions:
+      contents: write
+    uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-sync.yml@main
+    with:
+      mode: ${{ inputs.mode || '' }}
