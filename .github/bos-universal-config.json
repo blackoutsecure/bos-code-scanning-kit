@@ -1,6 +1,5 @@
 {
-  "target_repo_role": "consumer",
-  "security": {
+  "gate": {
     "enable_lint": true,
     "enable_python_lint": true,
     "python_version": "3.12",
@@ -41,16 +40,34 @@
       "NOTICE"
     ]
   },
-  "sync": {
+  "managed_file_sync": {
+    "direction": "source-to-destination",
     "services": [
       "common",
       "lf_line_endings",
       "dependabot_actions",
-      "dependabot_pip",
-      "python",
+      "dotfiles",
       "markdownlint",
-      "shellcheckrc",
-      "bos_universal_config"
+      "shellcheck"
     ]
+  },
+  "action_test": {
+    "python_versions": [
+      "3.10",
+      "3.11",
+      "3.12"
+    ],
+    "os_matrix": [
+      "ubuntu-latest"
+    ],
+    "python_packages": [
+      "pytest>=8.0",
+      "ruff>=0.6",
+      "PyYAML>=6.0"
+    ],
+    "pytest_args": "-q",
+    "enable_smoke_test": false,
+    "timeout_pytest": 10,
+    "timeout_smoke": 5
   }
 }
