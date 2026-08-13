@@ -36,7 +36,10 @@
     }
   },
   "managed_file_sync": {
-    "disabled_services": []
+    "services": [
+      "bos_universal_action_test_kicker",
+      "bos_universal_marketplace_kicker"
+    ]
   },
   "action_test": {
     "python_versions": [
