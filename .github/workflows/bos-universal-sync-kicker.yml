@@ -1,5 +1,5 @@
 # Blackout Secure universal sync kicker (hub-managed).
-# Customize via `bos-universal-config.json` (repo root), not this file.
+# Customize via `.github/bos-universal-config.json`, not this file.
 # Schema docs: https://github.com/blackoutsecure/bos-automation-hub
 name: Blackout Secure universal sync (kicker)
 run-name: >-
@@ -66,6 +66,7 @@ jobs:
     # Use the promoted reusable until the central workflow is repaired.
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-sync.yml@main
     with:
+      config_path: '.github/bos-universal-config.json'
       mode: ${{ inputs.mode || '' }}
 
   sync-main:
@@ -76,4 +77,5 @@ jobs:
       contents: write
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-sync.yml@main
     with:
+      config_path: '.github/bos-universal-config.json'
       mode: ${{ inputs.mode || '' }}
