@@ -62,8 +62,7 @@ jobs:
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-sync.yml@dev
     with:
       mode: ${{ inputs.mode || '' }}
-    secrets:
-      workflow_sync_pat: ${{ secrets.WORKFLOW_SYNC_PAT }}
+    secrets: inherit
 
   sync-main:
     name: Sync managed files (main)
@@ -80,5 +79,4 @@ jobs:
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-sync.yml@main
     with:
       mode: ${{ inputs.mode || '' }}
-    secrets:
-      workflow_sync_pat: ${{ secrets.WORKFLOW_SYNC_PAT }}
+    secrets: inherit
