@@ -178,6 +178,7 @@ jobs:
       release_draft: ${{ inputs.draft }}
       release_make_latest: 'true'
       release_generate_notes: true
+    secrets: inherit
 
   metadata:
     name: Marketplace repository metadata
