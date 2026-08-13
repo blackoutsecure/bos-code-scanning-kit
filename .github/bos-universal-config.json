@@ -36,9 +36,7 @@
     }
   },
   "managed_file_sync": {
-    "disabled_services": [
-      "bos_universal_launchpad_kicker"
-    ]
+    "disabled_services": []
   },
   "action_test": {
     "python_versions": [
