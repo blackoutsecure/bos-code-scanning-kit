@@ -370,8 +370,7 @@ bos-scan sarif \
 Issues and PRs are welcome on `dev`. Run the tests with:
 
 ```bash
-pip install -e .
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
 pytest test/ -v
 ruff check src test
 ```

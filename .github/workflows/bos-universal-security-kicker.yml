@@ -61,8 +61,7 @@ jobs:
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-security.yml@dev
     with:
       config_authoritative: true
-    secrets:
-      scanning_pat: ${{ secrets.SCANNING_PAT }}
+    secrets: inherit
 
   security-main:
     name: security (main)
@@ -76,5 +75,4 @@ jobs:
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-security.yml@main
     with:
       config_authoritative: true
-    secrets:
-      scanning_pat: ${{ secrets.SCANNING_PAT }}
+    secrets: inherit
