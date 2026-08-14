@@ -207,6 +207,7 @@ def cmd_posture(args: argparse.Namespace) -> int:
             config_path=args.config or None,
             global_config_path=args.global_config,
             use_global_config=args.use_global_config,
+            repo_name=args.repo,
         )
     except cfg_mod.ConfigError as exc:
         sys.stderr.write(f"error: {exc}\n")

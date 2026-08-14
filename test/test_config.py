@@ -266,3 +266,40 @@ def test_unknown_keys_are_ignored(tmp_path: Path):
     p.write_text("marketplace:\n  community_health_source: inherit\nowner: bos\n")
     cfg = cfg_mod.load(p)
     assert cfg.owner == "bos"
+
+
+# ---------------------------------------------------------------------------
+# repo_name defaulting
+# ---------------------------------------------------------------------------
+
+def test_project_name_defaults_to_repo_name_when_unset(tmp_path: Path):
+    """When project_name is not in config, it defaults to the provided repo_name."""
+    p = tmp_path / ".bos-scan.yml"
+    p.write_text("owner: blackoutsecure\n")
+    cfg = cfg_mod.load(p, repo_name="my-repo")
+    assert cfg.project_name == "my-repo"
+
+
+def test_project_name_in_config_takes_precedence_over_repo_name(tmp_path: Path):
+    """When project_name is set in config, it is not overridden by repo_name."""
+    p = tmp_path / ".bos-scan.yml"
+    p.write_text("owner: blackoutsecure\nproject_name: explicit-name\n")
+    cfg = cfg_mod.load(p, repo_name="my-repo")
+    assert cfg.project_name == "explicit-name"
+
+
+def test_project_name_stays_unset_when_no_repo_name_provided(tmp_path: Path):
+    """When no repo_name is provided and project_name is unset in config."""
+    p = tmp_path / ".bos-scan.yml"
+    p.write_text("owner: blackoutsecure\n")
+    cfg = cfg_mod.load(p, repo_name="")
+    assert cfg.project_name == ""
+
+
+def test_resolve_defaults_project_name_to_repo_name(tmp_path: Path):
+    """The resolve() function passes repo_name through to load()."""
+    config_path = tmp_path / ".bos-scan.yml"
+    config_path.write_text("owner: blackoutsecure\n")
+
+    cfg = cfg_mod.resolve(tmp_path, repo_name="resolved-repo")
+    assert cfg.project_name == "resolved-repo"

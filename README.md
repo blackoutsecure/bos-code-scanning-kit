@@ -46,6 +46,21 @@ required reviews, and CODEOWNERS for every branch you care about.
 [gitleaks]:   https://github.com/gitleaks/gitleaks
 [shellcheck]: https://www.shellcheck.net
 
+## 📖 Table of Contents
+
+- [✨ Features](#-features)
+- [📋 Prerequisites](#-prerequisites)
+- [🚀 Quick start](#-quick-start)
+- [⚙️ Action inputs](#%EF%B8%8F-action-inputs)
+- [📤 Action outputs](#-action-outputs)
+- [🏗️ Configuration inheritance and layering](#%EF%B8%8F-configuration-inheritance-and-layering)
+- [📝 Config schema reference](#-config-schema-reference)
+- [🔒 SCANNING_PAT — advanced posture credentials walkthrough](#-scanning_pat--advanced-posture-credentials-walkthrough)
+- [🧪 Supported code scanning](#-supported-code-scanning)
+- [💻 Local usage (CLI)](#-local-usage-cli)
+- [🤝 Contributing](#-contributing)
+- [📜 License](#-license)
+
 ## 📋 Prerequisites
 
 - GitHub-hosted Linux runner (`ubuntu-latest` or newer) — the kit
@@ -54,12 +69,12 @@ required reviews, and CODEOWNERS for every branch you care about.
   `${{ secrets.GITHUB_TOKEN }}` is enough for the code-scanning probe
   (`PS001`). Secret-scanning (`PS002`), Dependabot (`PS003`), and
   branch-protection probes (`PS020`-`PS025`) require a PAT — see
-  [SCANNING_PAT — advanced posture credentials walkthrough](#scanning_pat--advanced-posture-credentials-walkthrough)
+  [🔒 SCANNING_PAT — advanced posture credentials walkthrough](#-scanning_pat--advanced-posture-credentials-walkthrough)
   for the full tick / don't-tick checklist (classic and fine-grained).
 - For the **SARIF upload**: `security-events: write` in your workflow
   `permissions:` block.
 
-## Quick start 🚀
+## 🚀 Quick start
 
 ```yaml
 name: Code scanning
@@ -153,7 +168,7 @@ the `commit` field of the GitHub Release JSON.
 | `outcome` | Severity-tier verdict for the run: `success` (no findings at any level), `warn` (only warning/note-level findings — nothing the enforcement policy would block on), or `failure` (at least one error-level finding from the posture audit or any scanner). Reflects severity only — it does NOT change based on `fail_on`, so callers can gate pipelines on the verdict independently of whether the kit step itself exited non-zero. |
 <!-- END action-outputs -->
 
-## SCANNING_PAT — advanced posture credentials walkthrough
+## 🔒 SCANNING_PAT — advanced posture credentials walkthrough
 
 The posture audit can run in two modes:
 
@@ -311,7 +326,7 @@ The result keeps `required_reviews: 2` from the global tier and applies
 `severity: fail` from the repo tier. A legacy `.bos-scan.yml` may remain flat;
 no `code_scanning` wrapper is required.
 
-## 📝 Config schema
+## 📝 Config schema reference
 
 Every field is optional. This representative file can be used either as a
 flat `.bos-scan.yml` or nested under `code_scanning` in a universal config:

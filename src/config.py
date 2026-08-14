@@ -179,12 +179,16 @@ def resolve(
     config_path: str | Path | None = None,
     global_config_path: str | Path = DEFAULT_GLOBAL_CONFIG_PATH,
     use_global_config: bool | None = None,
+    repo_name: str = "",
 ) -> Config:
     """Resolve marketplace, optional global, and repository config tiers.
 
     ``use_global_config`` is tri-state: ``None`` auto-loads the conventional
     path when present, ``True`` requires it, and ``False`` disables it.
     Explicit relative paths are resolved from ``root``.
+
+    If ``repo_name`` is provided and project_name is unset in config,
+    project_name defaults to ``repo_name``.
     """
     root = root.resolve()
 
@@ -203,11 +207,15 @@ def resolve(
         elif use_global_config is True:
             raise ConfigError(f"global config not found: {candidate}")
 
-    return load(repo_path, global_path=global_path)
+    return load(repo_path, global_path=global_path, repo_name=repo_name)
 
 
-def load(path: Path | None, *, global_path: Path | None = None) -> Config:
-    """Load and merge bundled marketplace, global, and repository config."""
+def load(path: Path | None, *, global_path: Path | None = None, repo_name: str = "") -> Config:
+    """Load and merge bundled marketplace, global, and repository config.
+
+    If ``repo_name`` is provided and project_name is unset in config,
+    project_name defaults to ``repo_name``.
+    """
     merged = _load_marketplace_section()
     source_paths = [f"bundled:{MARKETPLACE_CONFIG_FILE}"]
 
@@ -224,6 +232,7 @@ def load(path: Path | None, *, global_path: Path | None = None) -> Config:
         merged,
         source_path=source_path,
         source_paths=tuple(source_paths),
+        repo_name=repo_name,
     )
 
 
@@ -292,10 +301,15 @@ def _from_dict(
     *,
     source_path: str = "",
     source_paths: tuple[str, ...] = (),
+    repo_name: str = "",
 ) -> Config:
     owner = _str(doc, "owner")
     project = _str(doc, "project_name")
     email = _str(doc, "email")
+
+    # Default project_name to repo_name if unset in config
+    if not project and repo_name:
+        project = repo_name
 
     scan = _scan_from_dict(_dict(doc, "scan"))
     posture = _posture_from_dict(_dict(doc, "posture"))
