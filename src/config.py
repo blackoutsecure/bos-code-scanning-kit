@@ -18,7 +18,6 @@ Design:
 
 from __future__ import annotations
 
-import importlib.resources
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -149,7 +148,7 @@ class Config:
 # ---------------------------------------------------------------------------
 
 CONFIG_SECTION = "code_scanning"
-MARKETPLACE_CONFIG_FILE = "blackout-secure-code-scanning-kit-marketplace-config.yml"
+MARKETPLACE_CONFIG_FILE = "blackout-secure-code-scanning-kit-marketplace-config.json"
 DEFAULT_GLOBAL_CONFIG_PATH = ".github/blackout-secure-code-scanning-kit-global-config.yml"
 
 # Legacy names remain public for callers that import this constant.
@@ -235,7 +234,7 @@ def _from_root(root: Path, path: str | Path) -> Path:
 
 def _load_marketplace_section() -> dict[str, Any]:
     try:
-        resource = importlib.resources.files("scan_kit").joinpath(MARKETPLACE_CONFIG_FILE)
+        resource = Path(__file__).with_name(MARKETPLACE_CONFIG_FILE)
         text = resource.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError) as exc:  # pragma: no cover - broken package
         raise ConfigError(f"failed to load marketplace config: {exc}") from exc

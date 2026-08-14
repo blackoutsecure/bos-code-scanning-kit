@@ -249,7 +249,7 @@ Only the tools listed above are executed by the current `action.yml`.
 ### Ecosystem detection coverage
 
 The scanner roster above is driven by the ecosystem detector
-([`src/scan_kit/detect.py`](src/scan_kit/detect.py)), which classifies
+([`src/detect.py`](src/detect.py)), which classifies
 the working tree along three axes. Anything not in this list will be
 silently ignored.
 
@@ -265,7 +265,7 @@ silently ignored.
 Configuration is merged in cascade order:
 
 1. **Marketplace config** — bundled at
-   `src/scan_kit/blackout-secure-code-scanning-kit-marketplace-config.yml`.
+   `src/blackout-secure-code-scanning-kit-marketplace-config.json`.
    It contains conservative best-practice defaults and is always available.
 2. **Organization global config** — optional
    `.github/blackout-secure-code-scanning-kit-global-config.yml`. `auto`

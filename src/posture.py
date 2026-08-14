@@ -32,8 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import __version__
-from .config import (
+from _version import __version__
+from config import (
     BranchPosture,
     CodeownersPosture,
     Config,
@@ -123,7 +123,7 @@ def _recommended_actions(totals: dict[str, int]) -> list[str]:
     return actions
 
 
-def _display_remediation(finding: "Finding") -> str:
+def _display_remediation(finding: Finding) -> str:
     if finding.severity == "pass":
         return "—"
     return finding.remediation or "—"

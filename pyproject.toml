@@ -44,7 +44,7 @@ dev = [
 ]
 
 [project.scripts]
-bos-scan = "scan_kit.cli:main"
+bos-scan = "cli:main"
 
 [project.urls]
 Homepage = "https://github.com/blackoutsecure/bos-code-scanning-kit"
@@ -79,14 +79,15 @@ ignore = [
 "test/**" = ["S", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["scan_kit"]
+known-first-party = ["_version", "cli", "config", "detect", "posture", "sarif"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/scan_kit"]
+only-include = ["src"]
+sources = ["src"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-  "src/scan_kit",
+  "src",
   "README.md",
   "LICENSE",
   "NOTICE",

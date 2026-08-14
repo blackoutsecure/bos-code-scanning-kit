@@ -1,4 +1,4 @@
-"""Tests for `scan_kit.cli` — argument plumbing + subcommand outputs."""
+"""Tests for `cli` — argument plumbing + subcommand outputs."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from scan_kit import __version__
-from scan_kit import cli as cli_mod
+import cli as cli_mod
+from _version import __version__
 
 # ---------------------------------------------------------------------------
 # version + --version
@@ -65,7 +65,7 @@ def test_validate_with_defaults(tmp_path: Path):
         rc = cli_mod.main(["validate", "--root", str(tmp_path)])
     assert rc == 0
     out = buf.getvalue()
-    assert "marketplace-config.yml" in out
+    assert "marketplace-config.json" in out
     assert "scan.tools:" in out
 
 
@@ -216,7 +216,7 @@ def test_posture_http_timeout_default_is_20(monkeypatch, tmp_path: Path):
         # Return the real audit's no-token result shape so the rest of
         # cmd_posture (printing, sarif, summary, exit code) runs the
         # same path as the unmocked test above.
-        from scan_kit import posture as posture_mod_real
+        import posture as posture_mod_real
         return posture_mod_real.AuditResult(findings=())
 
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -240,7 +240,7 @@ def test_posture_http_timeout_override_flows_through(monkeypatch, tmp_path: Path
 
     def fake_audit(**kwargs):
         captured.update(kwargs)
-        from scan_kit import posture as posture_mod_real
+        import posture as posture_mod_real
         return posture_mod_real.AuditResult(findings=())
 
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)

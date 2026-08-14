@@ -65,7 +65,7 @@ jobs:
       # sub-job (this repo IS that kit). `self-scan.yml` runs the
       # in-tree `./` composite against dev code instead.
       enable_kit_composite: false
-      # Covers `src/scan_kit/` (Python module), the kit's composite
+      # Covers `src/` (Python modules), the kit's composite
       # `action.yml`, and all workflow YAML in `.github/workflows/`.
       #
       # NOTE: the string is passed to `fromJSON()` on the reusable

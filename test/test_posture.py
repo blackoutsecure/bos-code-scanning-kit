@@ -1,4 +1,4 @@
-"""Tests for `scan_kit.posture` — workflow-perms scan, CODEOWNERS scan,
+"""Tests for `posture` — workflow-perms scan, CODEOWNERS scan,
 and the API-driven branch/GHAS audits exercised via a fake client.
 """
 
@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
-from scan_kit import posture as posture_mod
-from scan_kit.config import (
+import posture as posture_mod
+from config import (
     BranchPosture,
     CodeownersPosture,
     Config,

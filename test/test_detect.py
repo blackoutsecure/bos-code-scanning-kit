@@ -1,10 +1,10 @@
-"""Tests for `scan_kit.detect` — ecosystem detector."""
+"""Tests for `detect` — ecosystem detector."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from scan_kit import detect as detect_mod
+import detect as detect_mod
 
 # ---------------------------------------------------------------------------
 # Empty repo

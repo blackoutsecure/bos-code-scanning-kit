@@ -23,11 +23,11 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from . import __version__
-from . import config as cfg_mod
-from . import detect as detect_mod
-from . import posture as posture_mod
-from . import sarif as sarif_mod
+import config as cfg_mod
+import detect as detect_mod
+import posture as posture_mod
+import sarif as sarif_mod
+from _version import __version__
 
 # ---------------------------------------------------------------------------
 # Top-level parser

@@ -1,4 +1,4 @@
-"""Tests for `scan_kit.config` — `.bos-scan.yml` loader, defaults, validation."""
+"""Tests for `config` — `.bos-scan.yml` loader, defaults, validation."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scan_kit import config as cfg_mod
+import config as cfg_mod
 
 # ---------------------------------------------------------------------------
 # Defaults

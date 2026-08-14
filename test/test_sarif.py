@@ -1,4 +1,4 @@
-"""Tests for `scan_kit.sarif` — merge + posture-finding emitter."""
+"""Tests for `sarif` — merge + posture-finding emitter."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from scan_kit import sarif as sarif_mod
-from scan_kit.posture import AuditResult, Finding
+import sarif as sarif_mod
+from posture import AuditResult, Finding
 
 # ---------------------------------------------------------------------------
 # empty_log / merge / dump / load
