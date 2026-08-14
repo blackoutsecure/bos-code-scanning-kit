@@ -26,10 +26,10 @@ branding:
 #   upload    → posts the merged SARIF to GitHub Advanced Security so
 #               findings land on the repo Security tab.
 #
-# Per-repo customization lives in `.bos-scan.yml` (auto-discovered at
-# the repo root). The inputs below are the small set of operator-level
-# overrides for CI; everything else (rule severities, branch
-# expectations, scanner exclusions) belongs in the YAML config.
+# Configuration resolves in marketplace, global, then repository order.
+# The marketplace baseline ships with the action; global and repo files
+# are discovered from the checkout. The inputs below control discovery
+# and the small set of operator-level overrides for CI.
 
 inputs:
   # ----- Identification -----
@@ -41,8 +41,22 @@ inputs:
     description: 'GitHub repo name being scanned. Defaults to the workflow context.'
     required: false
     default: ''
+  use_global_config:
+    description: >-
+      `auto` loads the organization-level global config when present.
+      `true` requires it; `false` disables it.
+    required: false
+    default: 'auto'
+  global_config_path:
+    description: >-
+      Organization-level config path. Loaded automatically when present,
+      after marketplace defaults and before the repository config.
+    required: false
+    default: '.github/blackout-secure-code-scanning-kit-global-config.yml'
   config:
-    description: 'Path to `.bos-scan.yml`. Defaults to auto-discovery at the repo root.'
+    description: >-
+      Repository config path. Defaults to `.github/bos-universal-config.json`,
+      `.github/bos-universal-config.yml`, then legacy `.bos-scan.yml` discovery.
     required: false
     default: ''
 
@@ -166,14 +180,25 @@ runs:
       env:
         GH_OWNER: ${{ inputs.owner || github.repository_owner }}
         GH_REPO:  ${{ inputs.repo  || github.event.repository.name }}
+        GH_USE_GLOBAL_CFG: ${{ inputs.use_global_config }}
+        GH_GLOBAL_CFG: ${{ inputs.global_config_path }}
         GH_CFG:   ${{ inputs.config }}
         GH_TOKEN: ${{ inputs.github_token || github.token }}
         FAIL_ON:  ${{ inputs.fail_on }}
         HTTP_TIMEOUT: ${{ inputs.http_timeout }}
       run: |
         set -euo pipefail
-        cfg_flag=()
-        [[ -n "${GH_CFG}" ]] && cfg_flag=(--config "${GH_CFG}")
+        cfg_flags=(--global-config "${GH_GLOBAL_CFG}")
+        case "${GH_USE_GLOBAL_CFG}" in
+          auto|'') ;;
+          true)  cfg_flags+=(--use-global-config) ;;
+          false) cfg_flags+=(--no-global-config) ;;
+          *)
+            echo "::error::use_global_config must be 'auto', 'true', or 'false'" >&2
+            exit 2
+            ;;
+        esac
+        [[ -n "${GH_CFG}" ]] && cfg_flags+=(--config "${GH_CFG}")
 
         # Always write the SARIF even on failure so the merge step
         # has it for upload.
@@ -187,7 +212,7 @@ runs:
           --skips-json "${GITHUB_WORKSPACE}/bos-scan-posture-skips.json" \
           --fail-on "${FAIL_ON}" \
           --http-timeout "${HTTP_TIMEOUT}" \
-          "${cfg_flag[@]}"
+          "${cfg_flags[@]}"
         ec=$?
         set -e
 

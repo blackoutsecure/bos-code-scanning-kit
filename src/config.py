@@ -1,8 +1,9 @@
-"""`.bos-scan.yml` loader, schema, and defaults.
+"""Layered configuration loader, schema, and defaults.
 
 This module is the single source of truth for what knobs the kit
-exposes and what their defaults are. Both the CLI and the composite
-Action read configuration through `load()`.
+exposes and what their defaults are. Configuration is deep-merged in
+marketplace, global, then repository order before schema validation.
+Both the CLI and the composite Action resolve configuration here.
 
 Design:
     * Defaults are conservative — anything that can FAIL a release
@@ -135,53 +136,163 @@ class Config:
     posture: PostureConfig = field(default_factory=PostureConfig)
     remediation: RemediationConfig = field(default_factory=RemediationConfig)
 
-    # Path the config was loaded from (empty when defaults were used).
+    # Highest-precedence user config path (empty for Marketplace-only config).
     source_path: str = ""
+    # All applied tiers in precedence order. The bundled marketplace
+    # resource is first, followed by global and repository files.
+    source_paths: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
 # Loader
 # ---------------------------------------------------------------------------
 
+CONFIG_SECTION = "code_scanning"
+MARKETPLACE_CONFIG_FILE = "blackout-secure-code-scanning-kit-marketplace-config.json"
+DEFAULT_GLOBAL_CONFIG_PATH = ".github/blackout-secure-code-scanning-kit-global-config.yml"
+
+# Legacy names remain public for callers that import this constant.
 DEFAULT_FILENAMES = (".bos-scan.yml", ".bos-scan.yaml", "bos-scan.yml")
+DEFAULT_CONFIG_PATHS = (
+    ".github/bos-universal-config.json",
+    ".github/bos-universal-config.yml",
+    ".github/bos-universal-config.yaml",
+    "bos-universal-config.json",
+    "bos-universal-config.yml",
+    "bos-universal-config.yaml",
+    *DEFAULT_FILENAMES,
+)
 
 
 def discover(cwd: Path) -> Path | None:
-    """Find the config file in `cwd`. Returns None if no file exists."""
-    for name in DEFAULT_FILENAMES:
-        candidate = cwd / name
+    """Find the preferred repository config. Returns None when absent."""
+    for relative_path in DEFAULT_CONFIG_PATHS:
+        candidate = cwd / relative_path
         if candidate.is_file():
             return candidate
     return None
 
 
-def load(path: Path | None) -> Config:
-    """Load a config from disk. `None` returns built-in defaults."""
-    if path is None:
-        return Config()
+def resolve(
+    root: Path,
+    *,
+    config_path: str | Path | None = None,
+    global_config_path: str | Path = DEFAULT_GLOBAL_CONFIG_PATH,
+    use_global_config: bool | None = None,
+) -> Config:
+    """Resolve marketplace, optional global, and repository config tiers.
 
+    ``use_global_config`` is tri-state: ``None`` auto-loads the conventional
+    path when present, ``True`` requires it, and ``False`` disables it.
+    Explicit relative paths are resolved from ``root``.
+    """
+    root = root.resolve()
+
+    if config_path:
+        repo_path = _from_root(root, config_path)
+        if not repo_path.is_file():
+            raise ConfigError(f"config not found: {repo_path}")
+    else:
+        repo_path = discover(root)
+
+    global_path: Path | None = None
+    if use_global_config is not False:
+        candidate = _from_root(root, global_config_path or DEFAULT_GLOBAL_CONFIG_PATH)
+        if candidate.is_file():
+            global_path = candidate
+        elif use_global_config is True:
+            raise ConfigError(f"global config not found: {candidate}")
+
+    return load(repo_path, global_path=global_path)
+
+
+def load(path: Path | None, *, global_path: Path | None = None) -> Config:
+    """Load and merge bundled marketplace, global, and repository config."""
+    merged = _load_marketplace_section()
+    source_paths = [f"bundled:{MARKETPLACE_CONFIG_FILE}"]
+
+    if global_path is not None:
+        merged = _deep_merge(merged, _load_section(global_path))
+        source_paths.append(str(global_path))
+
+    if path is not None:
+        merged = _deep_merge(merged, _load_section(path))
+        source_paths.append(str(path))
+
+    source_path = str(path or global_path or "")
+    return _from_dict(
+        merged,
+        source_path=source_path,
+        source_paths=tuple(source_paths),
+    )
+
+
+def _from_root(root: Path, path: str | Path) -> Path:
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else root / candidate
+
+
+def _load_marketplace_section() -> dict[str, Any]:
     try:
-        import yaml
-    except ImportError as exc:                            # pragma: no cover - hard env
-        raise ConfigError("PyYAML is required to load .bos-scan.yml") from exc
+        resource = Path(__file__).with_name(MARKETPLACE_CONFIG_FILE)
+        text = resource.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError) as exc:  # pragma: no cover - broken package
+        raise ConfigError(f"failed to load marketplace config: {exc}") from exc
+    return _parse_document(text, source=f"bundled:{MARKETPLACE_CONFIG_FILE}")
 
+
+def _load_section(path: Path) -> dict[str, Any]:
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise ConfigError(f"config not found: {path}") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"config must be UTF-8 text: {path}") from exc
+    except OSError as exc:
+        raise ConfigError(f"failed to read config {path}: {exc}") from exc
+    return _parse_document(text, source=str(path))
+
+
+def _parse_document(text: str, *, source: str) -> dict[str, Any]:
+    """Parse YAML/JSON and extract the optional ``code_scanning`` section."""
+
+    try:
+        import yaml
+    except ImportError as exc:                            # pragma: no cover - hard env
+        raise ConfigError("PyYAML is required to load code scanning config") from exc
 
     try:
         doc = yaml.safe_load(text) or {}
     except yaml.YAMLError as exc:
-        raise ConfigError(f"invalid YAML in {path}: {exc}") from exc
+        raise ConfigError(f"invalid YAML in {source}: {exc}") from exc
 
     if not isinstance(doc, dict):
-        raise ConfigError(f"{path}: top-level must be a mapping")
+        raise ConfigError(f"{source}: top-level must be a mapping")
 
-    return _from_dict(doc, source_path=str(path))
+    section = doc.get(CONFIG_SECTION, doc)
+    if not isinstance(section, dict):
+        raise ConfigError(f"{source}: `{CONFIG_SECTION}` must be a mapping")
+    return section
 
 
-def _from_dict(doc: dict[str, Any], *, source_path: str = "") -> Config:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge mappings; lower-precedence lists and scalars replace."""
+    merged = dict(base)
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _from_dict(
+    doc: dict[str, Any],
+    *,
+    source_path: str = "",
+    source_paths: tuple[str, ...] = (),
+) -> Config:
     owner = _str(doc, "owner")
     project = _str(doc, "project_name")
     email = _str(doc, "email")
@@ -198,6 +309,7 @@ def _from_dict(doc: dict[str, Any], *, source_path: str = "") -> Config:
         posture=posture,
         remediation=remediation,
         source_path=source_path,
+        source_paths=source_paths,
     )
 
 

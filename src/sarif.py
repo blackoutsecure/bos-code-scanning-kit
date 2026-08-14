@@ -20,8 +20,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import __version__
-from .posture import Finding
+from _version import __version__
+from posture import Finding
 
 SARIF_VERSION = "2.1.0"
 SARIF_SCHEMA = (

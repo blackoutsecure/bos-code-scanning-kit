@@ -5,7 +5,7 @@ Subcommands:
     detect     Walk the repo and print the ecosystem detection result.
     posture    Run the GitHub-side posture audit (GHAS toggles, branch
                protection, workflow permissions, CODEOWNERS).
-    validate   Parse `.bos-scan.yml` and print the resolved config.
+    validate   Resolve layered configuration and print the result.
     sarif      Merge multiple SARIF files (and optionally inject a
                posture run) into one output file ready for GHAS upload.
 
@@ -23,15 +23,43 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from . import __version__
-from . import config as cfg_mod
-from . import detect as detect_mod
-from . import posture as posture_mod
-from . import sarif as sarif_mod
+import config as cfg_mod
+import detect as detect_mod
+import posture as posture_mod
+import sarif as sarif_mod
+from _version import __version__
 
 # ---------------------------------------------------------------------------
 # Top-level parser
 # ---------------------------------------------------------------------------
+
+def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--root", default=".", help="Repository root (default: cwd).")
+    global_config = parser.add_mutually_exclusive_group()
+    global_config.add_argument(
+        "--use-global-config",
+        action="store_true",
+        dest="use_global_config",
+        help="Require and merge the organization-level global config.",
+    )
+    global_config.add_argument(
+        "--no-global-config",
+        action="store_false",
+        dest="use_global_config",
+        help="Disable automatic global config discovery.",
+    )
+    parser.set_defaults(use_global_config=None)
+    parser.add_argument(
+        "--global-config",
+        default=cfg_mod.DEFAULT_GLOBAL_CONFIG_PATH,
+        help="Global config path, loaded automatically when present.",
+    )
+    parser.add_argument(
+        "--config",
+        default="",
+        help="Explicit repository config path (default: auto-discover under --root).",
+    )
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -58,12 +86,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # validate
-    p_val = sub.add_parser("validate", help="Parse `.bos-scan.yml` and print the config.")
-    p_val.add_argument("--root", default=".", help="Repository root (default: cwd).")
-    p_val.add_argument(
-        "--config", default="",
-        help="Explicit config path (default: auto-discover under --root).",
-    )
+    p_val = sub.add_parser("validate", help="Resolve and validate layered configuration.")
+    _add_config_arguments(p_val)
 
     # posture
     p_pos = sub.add_parser("posture", help="Run the GitHub posture audit.")
@@ -73,8 +97,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--token", default="",
         help="GitHub token (defaults to $GITHUB_TOKEN).",
     )
-    p_pos.add_argument("--root", default=".", help="Repository root (default: cwd).")
-    p_pos.add_argument("--config", default="", help="Explicit `.bos-scan.yml` path.")
+    _add_config_arguments(p_pos)
     p_pos.add_argument(
         "--sarif", default="",
         help="If set, write a SARIF file with the posture findings.",
@@ -147,20 +170,21 @@ def cmd_detect(args: argparse.Namespace) -> int:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    cfg_path: Path | None = (
-        Path(args.config).resolve() if args.config else cfg_mod.discover(root)
-    )
 
     try:
-        config = cfg_mod.load(cfg_path)
+        config = cfg_mod.resolve(
+            root,
+            config_path=args.config or None,
+            global_config_path=args.global_config,
+            use_global_config=args.use_global_config,
+        )
     except cfg_mod.ConfigError as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
-    if cfg_path is None:
-        print("(no .bos-scan.yml found — using built-in defaults)")
-    else:
-        print(f"Loaded: {cfg_path}")
+    print("Config cascade:")
+    for source in config.source_paths:
+        print(f"  - {source}")
 
     print(f"owner:        {config.owner or '(unset)'}")
     print(f"project_name: {config.project_name or '(unset)'}")
@@ -177,9 +201,13 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_posture(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    cfg_path = Path(args.config).resolve() if args.config else cfg_mod.discover(root)
     try:
-        config = cfg_mod.load(cfg_path)
+        config = cfg_mod.resolve(
+            root,
+            config_path=args.config or None,
+            global_config_path=args.global_config,
+            use_global_config=args.use_global_config,
+        )
     except cfg_mod.ConfigError as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2

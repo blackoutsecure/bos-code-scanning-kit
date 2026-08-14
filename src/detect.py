@@ -12,7 +12,7 @@ The detector classifies repos along three orthogonal axes:
                        (Dockerfile -> hadolint+trivy image, IaC -> checkov,
                         GH workflows -> actionlint, shell scripts -> shellcheck).
 
-The output is consumed by `scan_kit.cli` and the composite Action to
+The output is consumed by `cli` and the composite Action to
 emit one "scanner plan" — the list of tool invocations to perform.
 """
 
