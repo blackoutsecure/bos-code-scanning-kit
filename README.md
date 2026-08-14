@@ -38,6 +38,12 @@ required reviews, and CODEOWNERS for every branch you care about.
 - **Layered config** — bundled Marketplace best practices are
   deep-merged with optional organization defaults and repository
   overrides. Legacy `.bos-scan.yml` files continue to work.
+- **AI-assisted triage** — uses GitHub Models automatically when a usable
+  token is available, supports explicit OpenAI-compatible providers, and
+  always falls back to local deterministic remediation. Disable model calls
+  with `enable_ai_findings_summary: false`.
+- **Independent package metadata** — package identity remains available even
+  when repository policy is absent, overridden, or not loaded.
 - **Pure-stdlib Python core** — no third-party Python deps beyond
   `PyYAML`. The composite Action installs the kit on the runner with a
   single `pip install`.
@@ -64,6 +70,7 @@ required reviews, and CODEOWNERS for every branch you care about.
     - [Ecosystem detection coverage](#ecosystem-detection-coverage)
   - [🏗️ Configuration inheritance and layering](#️-configuration-inheritance-and-layering)
   - [📝 Config schema reference](#-config-schema-reference)
+  - [⚠️ Runtime and repository notes](#️-runtime-and-repository-notes)
   - [💻 Local usage (CLI)](#-local-usage-cli)
   - [🤝 Contributing](#-contributing)
   - [📜 License](#-license)
@@ -118,7 +125,38 @@ jobs:
 
 That's it. The kit auto-discovers your ecosystem, optional global and
 repository config files, runs every applicable scanner, audits posture,
-and uploads a single SARIF.
+optionally summarizes attention findings with a detected AI provider, and
+uploads a single SARIF.
+
+### AI triage and data handling
+
+AI triage is enabled in `auto` mode by the bundled Marketplace config. The
+action first looks for GitHub Models credentials, then uses an explicitly
+configured external provider only when its endpoint and credential are
+available. If no provider is usable, or a request fails, the scan continues
+with deterministic local remediation and the job summary reports the
+fallback.
+
+Only findings selected for the job summary are sent to a model, and only
+when a provider is detected. To prohibit model calls for an organization or
+repository, add this to its global or repository config:
+
+```yaml
+code_scanning:
+  remediation:
+    enable_ai_findings_summary: false
+```
+
+For GitHub Models, the action uses `GITHUB_MODELS_TOKEN` when present and
+otherwise the workflow token, with optional `GITHUB_MODELS_ENDPOINT` and
+`GITHUB_MODELS_MODEL` overrides. The workflow may need the `models: read`
+permission. A token without model access is treated as unavailable; it does
+not fail the scan.
+
+External providers use an explicit provider name and OpenAI-compatible
+environment variables such as `OPENAI_API_KEY` and
+`OPENAI_API_ENDPOINT`. Keep credentials in Actions secrets or the runner
+environment; never commit them to config files.
 
 > The `secrets.SCANNING_PAT || secrets.GITHUB_TOKEN` form is safe to
 > ship before you've created the PAT — when the secret is unset, the
@@ -291,9 +329,10 @@ Configuration is merged in cascade order:
   `src/blackout-secure-code-scanning-kit-marketplace-config.json`.
   It explicitly enables only broadly applicable, warning-level posture
   checks: GHAS coverage, explicit workflow permissions, no `write-all`, and
-  pinned third-party actions. It does not select branches, require
-  CODEOWNERS, validate identities through the API, enable AI, or add scanner
-  exclusions on behalf of every repository.
+  pinned third-party actions. It also enables opportunistic AI triage with a
+  deterministic fallback. It does not select branches, require CODEOWNERS,
+  validate identities through the API, or add scanner exclusions on behalf
+  of every repository.
 2. **Organization global config** — optional
    `.github/blackout-secure-code-scanning-kit-global-config.yml`. `auto`
    loads it when present, `true` requires it, and `false` disables it.
@@ -421,6 +460,33 @@ GitHub Models uses `GITHUB_MODELS_TOKEN` when present, otherwise the workflow
 and `GITHUB_MODELS_MODEL`. Add the workflow permission required by your
 GitHub Models setup; a token without model access simply produces the local
 fallback.
+
+## ⚠️ Runtime and repository notes
+
+- **Checkout is required.** Put `actions/checkout` before the kit. The action
+  scans `${{ github.workspace }}`; without a checkout there is no repository
+  content to inspect.
+- **The runner needs outbound network access.** The action downloads pinned
+  actionlint, gitleaks, and ShellCheck releases at runtime, and may contact
+  GitHub APIs for posture checks or a configured AI provider. No `latest`
+  scanner URL is used.
+- **Scanner stage controls are action inputs.** Use `enable_posture`,
+  `enable_scanners`, `enable_upload`, `fail_on`, and `http_timeout` in the
+  workflow for the composite action. The shared `scan.*` schema is retained
+  for config compatibility and local validation, but it does not currently
+  replace those action-level controls or select additional binaries.
+- **Gitleaks scans available Git history.** Shallow or unavailable Git
+  history limits historical secret coverage; use an appropriate checkout
+  depth when historical scanning is required.
+- **SARIF upload is separate from scanning.** Set `enable_upload: false` for
+  local/artifact-only use, or keep it enabled with `security-events: write` to
+  publish findings to the repository Security tab.
+- **Posture skips are not passes.** Missing token permissions produce
+  indeterminate/skipped checks rather than evidence that the control is
+  enabled. Use the documented `SCANNING_PAT` pattern for admin-gated checks.
+- **Package metadata is not policy.** `action.yml`, `pyproject.toml`, and the
+  installed package metadata own identity; repository/global config owns
+  policy. Ignoring or overriding policy does not remove package identity.
 
 ## 💻 Local usage (CLI)
 
