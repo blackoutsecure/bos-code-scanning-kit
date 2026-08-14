@@ -25,6 +25,7 @@ from pathlib import Path
 
 import config as cfg_mod
 import detect as detect_mod
+import metadata as metadata_mod
 import posture as posture_mod
 import sarif as sarif_mod
 from _version import __version__
@@ -170,6 +171,7 @@ def cmd_detect(args: argparse.Namespace) -> int:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    package = metadata_mod.package_metadata()
 
     try:
         config = cfg_mod.resolve(
@@ -182,6 +184,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
+    print("Package metadata:")
+    print(f"  name:        {package['name']}")
+    print(f"  version:     {package['version']}")
+    print(f"  author:      {package['author']}")
+    print(f"  description: {package['description']}")
     print("Config cascade:")
     for source in config.source_paths:
         print(f"  - {source}")
@@ -207,6 +214,7 @@ def cmd_posture(args: argparse.Namespace) -> int:
             config_path=args.config or None,
             global_config_path=args.global_config,
             use_global_config=args.use_global_config,
+            repo_name=args.repo,
         )
     except cfg_mod.ConfigError as exc:
         sys.stderr.write(f"error: {exc}\n")

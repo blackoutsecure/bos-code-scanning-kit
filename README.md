@@ -38,6 +38,12 @@ required reviews, and CODEOWNERS for every branch you care about.
 - **Layered config** — bundled Marketplace best practices are
   deep-merged with optional organization defaults and repository
   overrides. Legacy `.bos-scan.yml` files continue to work.
+- **AI-assisted triage** — uses GitHub Models automatically when a usable
+  token is available, supports explicit OpenAI-compatible providers, and
+  always falls back to local deterministic remediation. Disable model calls
+  with `enable_ai_findings_summary: false`.
+- **Independent package metadata** — package identity remains available even
+  when repository policy is absent, overridden, or not loaded.
 - **Pure-stdlib Python core** — no third-party Python deps beyond
   `PyYAML`. The composite Action installs the kit on the runner with a
   single `pip install`.
@@ -46,20 +52,43 @@ required reviews, and CODEOWNERS for every branch you care about.
 [gitleaks]:   https://github.com/gitleaks/gitleaks
 [shellcheck]: https://www.shellcheck.net
 
+## 📖 Table of Contents
+
+- [Blackout Secure Code Scanning Kit](#blackout-secure-code-scanning-kit)
+  - [✨ Features](#-features)
+  - [📖 Table of Contents](#-table-of-contents)
+  - [📋 Prerequisites](#-prerequisites)
+  - [🚀 Quick start](#-quick-start)
+    - [Version pinning](#version-pinning)
+  - [⚙️ Action inputs](#️-action-inputs)
+  - [📤 Action outputs](#-action-outputs)
+  - [🔒 SCANNING\_PAT — advanced posture credentials walkthrough](#-scanning_pat--advanced-posture-credentials-walkthrough)
+  - [Posture rule reference](#posture-rule-reference)
+  - [🧪 Supported code scanning](#-supported-code-scanning)
+    - [Scanner roster](#scanner-roster)
+    - [Tool inventory (v1.0)](#tool-inventory-v10)
+    - [Ecosystem detection coverage](#ecosystem-detection-coverage)
+  - [🏗️ Configuration inheritance and layering](#️-configuration-inheritance-and-layering)
+  - [📝 Config schema reference](#-config-schema-reference)
+  - [⚠️ Runtime and repository notes](#️-runtime-and-repository-notes)
+  - [💻 Local usage (CLI)](#-local-usage-cli)
+  - [🤝 Contributing](#-contributing)
+  - [📜 License](#-license)
+
 ## 📋 Prerequisites
 
 - GitHub-hosted Linux runner (`ubuntu-latest` or newer) — the kit
-  installs `python` via `actions/setup-python@v5` automatically.
+  installs Python 3.12 via `actions/setup-python@v6.2.0` automatically.
 - For the **posture audit**: a token with `repo` scope. The default
   `${{ secrets.GITHUB_TOKEN }}` is enough for the code-scanning probe
   (`PS001`). Secret-scanning (`PS002`), Dependabot (`PS003`), and
   branch-protection probes (`PS020`-`PS025`) require a PAT — see
-  [SCANNING_PAT — advanced posture credentials walkthrough](#scanning_pat--advanced-posture-credentials-walkthrough)
+  [🔒 SCANNING_PAT — advanced posture credentials walkthrough](#-scanning_pat--advanced-posture-credentials-walkthrough)
   for the full tick / don't-tick checklist (classic and fine-grained).
 - For the **SARIF upload**: `security-events: write` in your workflow
   `permissions:` block.
 
-## Quick start 🚀
+## 🚀 Quick start
 
 ```yaml
 name: Code scanning
@@ -76,6 +105,7 @@ permissions:
   contents:        read
   security-events: write   # upload SARIF
   actions:         read    # workflow context
+  models:          read    # optional GitHub Models AI triage
 
 jobs:
   scan:
@@ -95,7 +125,38 @@ jobs:
 
 That's it. The kit auto-discovers your ecosystem, optional global and
 repository config files, runs every applicable scanner, audits posture,
-and uploads a single SARIF.
+optionally summarizes attention findings with a detected AI provider, and
+uploads a single SARIF.
+
+### AI triage and data handling
+
+AI triage is enabled in `auto` mode by the bundled Marketplace config. The
+action first looks for GitHub Models credentials, then uses an explicitly
+configured external provider only when its endpoint and credential are
+available. If no provider is usable, or a request fails, the scan continues
+with deterministic local remediation and the job summary reports the
+fallback.
+
+Only findings selected for the job summary are sent to a model, and only
+when a provider is detected. To prohibit model calls for an organization or
+repository, add this to its global or repository config:
+
+```yaml
+code_scanning:
+  remediation:
+    enable_ai_findings_summary: false
+```
+
+For GitHub Models, the action uses `GITHUB_MODELS_TOKEN` when present and
+otherwise the workflow token, with optional `GITHUB_MODELS_ENDPOINT` and
+`GITHUB_MODELS_MODEL` overrides. The workflow may need the `models: read`
+permission. A token without model access is treated as unavailable; it does
+not fail the scan.
+
+External providers use an explicit provider name and OpenAI-compatible
+environment variables such as `OPENAI_API_KEY` and
+`OPENAI_API_ENDPOINT`. Keep credentials in Actions secrets or the runner
+environment; never commit them to config files.
 
 > The `secrets.SCANNING_PAT || secrets.GITHUB_TOKEN` form is safe to
 > ship before you've created the PAT — when the secret is unset, the
@@ -153,7 +214,7 @@ the `commit` field of the GitHub Release JSON.
 | `outcome` | Severity-tier verdict for the run: `success` (no findings at any level), `warn` (only warning/note-level findings — nothing the enforcement policy would block on), or `failure` (at least one error-level finding from the posture audit or any scanner). Reflects severity only — it does NOT change based on `fail_on`, so callers can gate pipelines on the verdict independently of whether the kit step itself exited non-zero. |
 <!-- END action-outputs -->
 
-## SCANNING_PAT — advanced posture credentials walkthrough
+## 🔒 SCANNING_PAT — advanced posture credentials walkthrough
 
 The posture audit can run in two modes:
 
@@ -265,8 +326,13 @@ silently ignored.
 Configuration is merged in cascade order:
 
 1. **Marketplace config** — bundled at
-   `src/blackout-secure-code-scanning-kit-marketplace-config.json`.
-   It contains conservative best-practice defaults and is always available.
+  `src/blackout-secure-code-scanning-kit-marketplace-config.json`.
+  It explicitly enables only broadly applicable, warning-level posture
+  checks: GHAS coverage, explicit workflow permissions, no `write-all`, and
+  pinned third-party actions. It also enables opportunistic AI triage with a
+  deterministic fallback. It does not select branches, require CODEOWNERS,
+  validate identities through the API, or add scanner exclusions on behalf
+  of every repository.
 2. **Organization global config** — optional
    `.github/blackout-secure-code-scanning-kit-global-config.yml`. `auto`
    loads it when present, `true` requires it, and `false` disables it.
@@ -279,6 +345,20 @@ inherited value. Repository values therefore win over global values, while
 unmentioned nested policy remains inherited from the Marketplace baseline.
 All files are read from the installed action or destination checkout; config
 discovery does not fetch another repository.
+
+Package identity is separate from this policy cascade. The package name,
+version, author, and description come from the installed package metadata and
+remain available even when repository policy is absent, overridden, or not
+loaded. `bos-scan validate` prints that metadata before the configuration
+cascade.
+
+Settings omitted from the Marketplace file use the implementation defaults:
+automatic ecosystem/tool detection, automatic CodeQL language detection,
+  `scan.fail_on: high`, advisory `warn` severities for posture rules,
+  `detect_msdo: skip`, and AI-assisted triage with deterministic local
+  fallback. AI is opportunistic: GitHub Models is used when a usable token is
+  present, and provider failures never fail the scan. Findings are sent to a
+  model only when AI is enabled and a provider is detected.
 
 Universal config files place this kit's settings under `code_scanning`:
 
@@ -311,7 +391,7 @@ The result keeps `required_reviews: 2` from the global tier and applies
 `severity: fail` from the repo tier. A legacy `.bos-scan.yml` may remain flat;
 no `code_scanning` wrapper is required.
 
-## 📝 Config schema
+## 📝 Config schema reference
 
 Every field is optional. This representative file can be used either as a
 flat `.bos-scan.yml` or nested under `code_scanning` in a universal config:
@@ -362,14 +442,51 @@ posture:
     validate_users_exist: false   # set true to probe each @user/@org-team via API
 
 remediation:
-  enable_ai_findings_summary: false
-  ai_findings_summary_provider: ""
+  enable_ai_findings_summary: true   # false disables all model calls
+  ai_findings_summary_provider: auto # auto | none | github-models | external name
   local_heuristic_fallback: true
 ```
 
 Unknown keys are ignored so future kit versions and other sections in a
-universal config do not break existing callers. AI summaries remain opt-in;
-the default remediation path is local and deterministic.
+universal config do not break existing callers. Set
+`enable_ai_findings_summary: false` in the organization or repository tier to
+disable model calls. To use an external OpenAI-compatible provider, set an
+explicit provider name and provide matching environment variables, for
+example `OPENAI_API_KEY` and `OPENAI_API_ENDPOINT` on the runner. The local
+deterministic remediation remains the fallback.
+
+GitHub Models uses `GITHUB_MODELS_TOKEN` when present, otherwise the workflow
+`GITHUB_TOKEN`, with endpoint/model overrides from `GITHUB_MODELS_ENDPOINT`
+and `GITHUB_MODELS_MODEL`. Add the workflow permission required by your
+GitHub Models setup; a token without model access simply produces the local
+fallback.
+
+## ⚠️ Runtime and repository notes
+
+- **Checkout is required.** Put `actions/checkout` before the kit. The action
+  scans `${{ github.workspace }}`; without a checkout there is no repository
+  content to inspect.
+- **The runner needs outbound network access.** The action downloads pinned
+  actionlint, gitleaks, and ShellCheck releases at runtime, and may contact
+  GitHub APIs for posture checks or a configured AI provider. No `latest`
+  scanner URL is used.
+- **Scanner stage controls are action inputs.** Use `enable_posture`,
+  `enable_scanners`, `enable_upload`, `fail_on`, and `http_timeout` in the
+  workflow for the composite action. The shared `scan.*` schema is retained
+  for config compatibility and local validation, but it does not currently
+  replace those action-level controls or select additional binaries.
+- **Gitleaks scans available Git history.** Shallow or unavailable Git
+  history limits historical secret coverage; use an appropriate checkout
+  depth when historical scanning is required.
+- **SARIF upload is separate from scanning.** Set `enable_upload: false` for
+  local/artifact-only use, or keep it enabled with `security-events: write` to
+  publish findings to the repository Security tab.
+- **Posture skips are not passes.** Missing token permissions produce
+  indeterminate/skipped checks rather than evidence that the control is
+  enabled. Use the documented `SCANNING_PAT` pattern for admin-gated checks.
+- **Package metadata is not policy.** `action.yml`, `pyproject.toml`, and the
+  installed package metadata own identity; repository/global config owns
+  policy. Ignoring or overriding policy does not remove package identity.
 
 ## 💻 Local usage (CLI)
 
