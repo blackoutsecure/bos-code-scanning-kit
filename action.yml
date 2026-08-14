@@ -469,11 +469,19 @@ runs:
         FAIL_ON:         ${{ inputs.fail_on }}
         TOKEN_INPUT_SUPPLIED: ${{ inputs.github_token != '' && 'true' || 'false' }}
         SARIF_PATH:      ${{ steps.merge.outputs.sarif_path }}
+        GITHUB_TOKEN:    ${{ inputs.github_token || github.token }}
+        CONFIG_PATH:     ${{ inputs.config }}
+        GLOBAL_CONFIG_PATH: ${{ inputs.global_config_path }}
+        USE_GLOBAL_CONFIG:  ${{ inputs.use_global_config }}
+        HTTP_TIMEOUT:     ${{ inputs.http_timeout }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}"
         python3 - <<'PY'
         import json, os, pathlib
+
+        from ai import detect_provider, summarize as summarize_with_ai
+        from config import resolve
 
         def md_escape(value):
             return str(value).replace("|", "\\|").replace("\n", " ")
@@ -694,6 +702,40 @@ runs:
             })
         attention_rows.extend(all_annotations)
 
+        # AI is opportunistic: unavailable providers never fail the scan.
+        ai_summary = None
+        ai_status = "disabled"
+        try:
+          use_global = os.environ.get("USE_GLOBAL_CONFIG", "auto")
+          use_global_value = {"true": True, "false": False}.get(use_global)
+          resolved_config = resolve(
+            pathlib.Path.cwd(),
+            config_path=os.environ.get("CONFIG_PATH") or None,
+            global_config_path=os.environ.get("GLOBAL_CONFIG_PATH") or None,
+            use_global_config=use_global_value,
+          )
+          remediation = resolved_config.remediation
+          if remediation.enable_ai_findings_summary:
+            provider = detect_provider(remediation.ai_findings_summary_provider)
+            if provider:
+              ai_status = f"attempted ({provider.name})"
+              ai_summary = summarize_with_ai(
+                attention_rows,
+                provider,
+                timeout=int(os.environ.get("HTTP_TIMEOUT", "20")),
+              )
+              if ai_summary is None:
+                ai_status = f"unavailable ({provider.name}); deterministic fallback"
+            else:
+              ai_status = "unavailable; deterministic fallback"
+        except Exception as exc:
+          ai_status = f"unavailable; deterministic fallback ({type(exc).__name__})"
+
+        config_rows.append(
+          ("AI triage summary", ai_status,
+           "Uses GitHub Models when available; configure or disable it in layered remediation settings.")
+        )
+
         report_recommendations = []
         if any(r["severity"] in ("error", "fail") for r in attention_rows) or any(r["severity"] == "error" for r in all_annotations):
             report_recommendations.append("Prioritize High/Critical rows before treating this repository as compliant.")
@@ -748,6 +790,8 @@ runs:
         for setting, value, _ in config_rows:
             print(f"    {setting}: {value}")
         print(f"  {bold}verdict{reset}: {verdict}")
+        if ai_summary:
+          print(f"  {bold}AI triage summary{reset}:\n{ai_summary}")
         print()
 
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -770,6 +814,9 @@ runs:
                 for label, result, detail in rows:
                     fh.write(f"| {label} | {result} | {detail} |\n")
                 fh.write(f"\n**Outcome:** `{outcome}` — {verdict}\n")
+                if ai_summary:
+                  fh.write("\n### AI triage summary\n\n")
+                  fh.write(ai_summary + "\n")
 
                 fh.write("\n### Configuration used\n\n")
                 fh.write("| Setting | Value | What it means |\n")

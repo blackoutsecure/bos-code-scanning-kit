@@ -1,15 +1,5 @@
 {
   "code_scanning": {
-    "description": "Blackout Secure Marketplace best practices. Organization and repository config tiers can override any setting without copying the full policy.",
-    "scan": {
-      "tools": "auto",
-      "exclude": [],
-      "fail_on": "high",
-      "codeql": {
-        "languages": "auto",
-        "exclude_languages": []
-      }
-    },
     "posture": {
       "ghas": {
         "require_code_scanning": "warn",
@@ -20,20 +10,8 @@
       "workflows": {
         "require_permissions_block": "warn",
         "forbid_write_all": "warn",
-        "require_pinned_actions": "warn",
-        "allow_tag_pin": [],
-        "detect_msdo": "skip"
-      },
-      "branches": {},
-      "codeowners": {
-        "require_file": "warn",
-        "validate_users_exist": false
+        "require_pinned_actions": "warn"
       }
-    },
-    "remediation": {
-      "enable_ai_findings_summary": false,
-      "ai_findings_summary_provider": "",
-      "local_heuristic_fallback": true
     }
   }
 }

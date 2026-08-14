@@ -34,6 +34,9 @@ except ImportError:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ACTION_YML = REPO_ROOT / "action.yml"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
+VERSION_PY = REPO_ROOT / "src" / "_version.py"
+
+PACKAGE_NAME = "bos-code-scanning-kit"
 
 DESC_MAX = 125  # MP010
 BRANDING_COLORS = {
@@ -57,11 +60,46 @@ def _read_pyproject_author(text: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _read_pyproject_field(text: str, field: str) -> str:
+    """Read a simple quoted project field from the PEP 621 block."""
+    m = re.search(
+        rf'^\s*{re.escape(field)}\s*=\s*["\']([^"\']+)["\']',
+        text,
+        re.MULTILINE,
+    )
+    return m.group(1).strip() if m else ""
+
+
+def _read_python_version(text: str) -> str:
+    """Read the package version constant without importing the source tree."""
+    m = re.search(r'^\s*__version__\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
+    return m.group(1).strip() if m else ""
+
+
 def main() -> int:
     failures: list[str] = []
 
     action = yaml.safe_load(ACTION_YML.read_text())
     pyproject_text = PYPROJECT.read_text()
+    version_text = VERSION_PY.read_text()
+    package_name = _read_pyproject_field(pyproject_text, "name")
+    package_version = _read_pyproject_field(pyproject_text, "version")
+    source_version = _read_python_version(version_text)
+
+    # ----- package identity --------------------------------------------
+    if package_name != PACKAGE_NAME:
+        failures.append(
+            f"pyproject.toml::project.name = {package_name!r}, expected {PACKAGE_NAME!r}"
+        )
+    if not package_version:
+        failures.append("pyproject.toml: missing project.version")
+    elif not source_version:
+        failures.append("src/_version.py: missing __version__")
+    elif package_version != source_version:
+        failures.append(
+            f"version drift: pyproject.toml={package_version!r} "
+            f"!= src/_version.py={source_version!r}"
+        )
 
     # ----- author -----
     action_author = (action.get("author") or "").strip()
@@ -111,7 +149,8 @@ def main() -> int:
 
     print(
         f"check_action_sync: OK "
-        f"(author={action_author!r}, desc={len(action_desc)} chars, "
+        f"(package={package_name!r}@{package_version}, author={action_author!r}, "
+        f"desc={len(action_desc)} chars, "
         f"runs.using={runs_using!r}, branding={color}/{icon})"
     )
     return 0

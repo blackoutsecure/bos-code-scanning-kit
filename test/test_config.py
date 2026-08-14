@@ -24,17 +24,17 @@ def test_defaults_when_no_path_given():
     assert cfg.posture.workflows.forbid_write_all == "warn"
     assert cfg.posture.codeowners.require_file == "warn"
     assert cfg.posture.codeowners.validate_users_exist is False
-    assert cfg.remediation.enable_ai_findings_summary is False
-    assert cfg.remediation.ai_findings_summary_provider == ""
+    assert cfg.remediation.enable_ai_findings_summary is True
+    assert cfg.remediation.ai_findings_summary_provider == "auto"
     assert cfg.remediation.local_heuristic_fallback is True
     assert cfg.posture.branches == {}
 
 
-def test_remediation_flags_are_opt_in_and_safe_by_default(tmp_path: Path):
+def test_remediation_flags_can_disable_ai_and_select_provider(tmp_path: Path):
     p = tmp_path / ".bos-scan.yml"
-    p.write_text("remediation:\n  enable_ai_findings_summary: true\n  ai_findings_summary_provider: openai\n  local_heuristic_fallback: true\n")
+    p.write_text("remediation:\n  enable_ai_findings_summary: false\n  ai_findings_summary_provider: openai\n  local_heuristic_fallback: true\n")
     cfg = cfg_mod.load(p)
-    assert cfg.remediation.enable_ai_findings_summary is True
+    assert cfg.remediation.enable_ai_findings_summary is False
     assert cfg.remediation.ai_findings_summary_provider == "openai"
     assert cfg.remediation.local_heuristic_fallback is True
 

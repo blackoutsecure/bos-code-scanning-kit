@@ -65,6 +65,8 @@ def test_validate_with_defaults(tmp_path: Path):
         rc = cli_mod.main(["validate", "--root", str(tmp_path)])
     assert rc == 0
     out = buf.getvalue()
+    assert "Package metadata:" in out
+    assert "bos-code-scanning-kit" in out
     assert "marketplace-config.json" in out
     assert "scan.tools:" in out
 

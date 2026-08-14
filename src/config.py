@@ -120,8 +120,10 @@ class PostureConfig:
 
 @dataclass(frozen=True)
 class RemediationConfig:
-    enable_ai_findings_summary: bool = False
-    ai_findings_summary_provider: str = ""
+    # Use a detected built-in provider when credentials are available;
+    # unavailable providers fall back to deterministic local remediation.
+    enable_ai_findings_summary: bool = True
+    ai_findings_summary_provider: str = "auto"
     local_heuristic_fallback: bool = True
 
 
@@ -432,8 +434,8 @@ def _branch_from_dict(d: dict[str, Any], *, branch_name: str) -> BranchPosture:
 
 def _remediation_from_dict(d: dict[str, Any]) -> RemediationConfig:
     return RemediationConfig(
-        enable_ai_findings_summary=_bool(d, "enable_ai_findings_summary", False),
-        ai_findings_summary_provider=_str(d, "ai_findings_summary_provider", ""),
+        enable_ai_findings_summary=_bool(d, "enable_ai_findings_summary", True),
+        ai_findings_summary_provider=_str(d, "ai_findings_summary_provider", "auto"),
         local_heuristic_fallback=_bool(d, "local_heuristic_fallback", True),
     )
 
