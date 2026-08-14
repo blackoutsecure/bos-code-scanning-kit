@@ -326,7 +326,7 @@ silently ignored.
 Configuration is merged in cascade order:
 
 1. **Marketplace config** — bundled at
-  `src/blackout-secure-code-scanning-kit-marketplace-config.json`.
+  `src/marketplace-config.json`.
   It explicitly enables only broadly applicable, warning-level posture
   checks: GHAS coverage, explicit workflow permissions, no `write-all`, and
   pinned third-party actions. It also enables opportunistic AI triage with a

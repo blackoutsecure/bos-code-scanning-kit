@@ -150,7 +150,7 @@ class Config:
 # ---------------------------------------------------------------------------
 
 CONFIG_SECTION = "code_scanning"
-MARKETPLACE_CONFIG_FILE = "blackout-secure-code-scanning-kit-marketplace-config.json"
+MARKETPLACE_CONFIG_FILE = "marketplace-config.json"
 DEFAULT_GLOBAL_CONFIG_PATH = ".github/blackout-secure-code-scanning-kit-global-config.yml"
 
 # Legacy names remain public for callers that import this constant.
