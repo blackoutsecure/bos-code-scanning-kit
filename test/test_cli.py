@@ -65,7 +65,7 @@ def test_validate_with_defaults(tmp_path: Path):
         rc = cli_mod.main(["validate", "--root", str(tmp_path)])
     assert rc == 0
     out = buf.getvalue()
-    assert "built-in defaults" in out
+    assert "marketplace-config.yml" in out
     assert "scan.tools:" in out
 
 
@@ -89,6 +89,33 @@ def test_validate_invalid_config_returns_2(tmp_path: Path):
         rc = cli_mod.main(["validate", "--root", str(tmp_path)])
     assert rc == 2
     assert "fail_on" in err.getvalue()
+
+
+def test_validate_loads_required_global_config(tmp_path: Path):
+    global_cfg = tmp_path / "org-scan.yml"
+    global_cfg.write_text("code_scanning:\n  owner: global-owner\n")
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cli_mod.main([
+            "validate",
+            "--root", str(tmp_path),
+            "--global-config", "org-scan.yml",
+            "--use-global-config",
+        ])
+    assert rc == 0
+    assert "global-owner" in buf.getvalue()
+
+
+def test_validate_missing_required_global_config_returns_2(tmp_path: Path):
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = cli_mod.main([
+            "validate",
+            "--root", str(tmp_path),
+            "--use-global-config",
+        ])
+    assert rc == 2
+    assert "global config not found" in err.getvalue()
 
 
 # ---------------------------------------------------------------------------

@@ -126,6 +126,93 @@ def test_discover_returns_none_when_absent(tmp_path: Path):
     assert cfg_mod.discover(tmp_path) is None
 
 
+def test_resolve_cascades_marketplace_global_and_repo_config(tmp_path: Path):
+        global_path = tmp_path / cfg_mod.DEFAULT_GLOBAL_CONFIG_PATH
+        global_path.parent.mkdir(parents=True)
+        global_path.write_text(
+                """\
+code_scanning:
+    owner: global-owner
+    posture:
+        ghas:
+            require_secret_scanning: fail
+        branches:
+            main:
+                required_reviews: 2
+        workflows:
+            allow_tag_pin: [global/action]
+"""
+        )
+        repo_path = tmp_path / ".github" / "bos-universal-config.yml"
+        repo_path.write_text(
+                """\
+code_scanning:
+    owner: repo-owner
+    posture:
+        ghas:
+            require_code_scanning: skip
+        branches:
+            main:
+                severity: fail
+        workflows:
+            allow_tag_pin: [repo/action]
+"""
+        )
+
+        cfg = cfg_mod.resolve(tmp_path)
+
+        assert cfg.owner == "repo-owner"
+        assert cfg.posture.ghas.require_code_scanning == "skip"
+        assert cfg.posture.ghas.require_secret_scanning == "fail"
+        assert cfg.posture.ghas.require_dependabot_alerts == "warn"
+        assert cfg.posture.branches["main"].required_reviews == 2
+        assert cfg.posture.branches["main"].severity == "fail"
+        assert cfg.posture.workflows.allow_tag_pin == ("repo/action",)
+        assert cfg.source_paths[0].endswith(cfg_mod.MARKETPLACE_CONFIG_FILE)
+        assert cfg.source_paths[1:] == (str(global_path), str(repo_path))
+
+
+def test_resolve_can_require_global_config(tmp_path: Path):
+        with pytest.raises(cfg_mod.ConfigError, match="global config not found"):
+                cfg_mod.resolve(tmp_path, use_global_config=True)
+
+
+def test_resolve_can_disable_global_config(tmp_path: Path):
+        global_path = tmp_path / cfg_mod.DEFAULT_GLOBAL_CONFIG_PATH
+        global_path.parent.mkdir(parents=True)
+        global_path.write_text("code_scanning:\n  owner: global-owner\n")
+
+        cfg = cfg_mod.resolve(tmp_path, use_global_config=False)
+
+        assert cfg.owner == ""
+        assert str(global_path) not in cfg.source_paths
+
+
+def test_discover_prefers_github_universal_config(tmp_path: Path):
+        legacy = tmp_path / ".bos-scan.yml"
+        legacy.write_text("owner: legacy\n")
+        preferred = tmp_path / ".github" / "bos-universal-config.yml"
+        preferred.parent.mkdir()
+        preferred.write_text("code_scanning:\n  owner: preferred\n")
+
+        assert cfg_mod.discover(tmp_path) == preferred
+
+
+def test_resolve_loads_preferred_json_universal_config(tmp_path: Path):
+    config_path = tmp_path / ".github" / "bos-universal-config.json"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        '{"code_scanning":{"project_name":"json-project",'
+        '"scan":{"fail_on":"critical"}}}'
+    )
+
+    cfg = cfg_mod.resolve(tmp_path)
+
+    assert cfg.project_name == "json-project"
+    assert cfg.scan.fail_on == "critical"
+    assert cfg.source_path == str(config_path)
+
+
 # ---------------------------------------------------------------------------
 # Validation errors
 # ---------------------------------------------------------------------------

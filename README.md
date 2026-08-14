@@ -35,9 +35,9 @@ required reviews, and CODEOWNERS for every branch you care about.
   finding land in a single SARIF that is uploaded to GitHub Advanced
   Security under one category (`bos-code-scanning-kit`), so they all
   appear on the repo Security tab.
-- **`.bos-scan.yml` config** — per-repo policy lives in one
-  human-readable YAML file at the repo root. Defaults are safe; you
-  only declare what you want to change.
+- **Layered config** — bundled Marketplace best practices are
+  deep-merged with optional organization defaults and repository
+  overrides. Legacy `.bos-scan.yml` files continue to work.
 - **Pure-stdlib Python core** — no third-party Python deps beyond
   `PyYAML`. The composite Action installs the kit on the runner with a
   single `pip install`.
@@ -93,8 +93,9 @@ jobs:
           github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}
 ```
 
-That's it. The kit auto-discovers your ecosystem, runs every applicable
-scanner, audits posture, and uploads a single SARIF.
+That's it. The kit auto-discovers your ecosystem, optional global and
+repository config files, runs every applicable scanner, audits posture,
+and uploads a single SARIF.
 
 > The `secrets.SCANNING_PAT || secrets.GITHUB_TOKEN` form is safe to
 > ship before you've created the PAT — when the secret is unset, the
@@ -126,7 +127,9 @@ the `commit` field of the GitHub Release JSON.
 | --- | --- | --- |
 | `owner` | _(none)_ | GitHub owner of the repo being scanned. Defaults to the workflow context. |
 | `repo` | _(none)_ | GitHub repo name being scanned. Defaults to the workflow context. |
-| `config` | _(none)_ | Path to `.bos-scan.yml`. Defaults to auto-discovery at the repo root. |
+| `use_global_config` | `auto` | `auto` loads the organization-level global config when present. `true` requires it; `false` disables it. |
+| `global_config_path` | `.github/blackout-secure-code-scanning-kit-global-config.yml` | Organization-level config path. Loaded automatically when present, after marketplace defaults and before the repository config. |
+| `config` | _(none)_ | Repository config path. Defaults to `.github/bos-universal-config.json`, `.github/bos-universal-config.yml`, then legacy `.bos-scan.yml` discovery. |
 | `github_token` | _(none)_ | GitHub token for the posture audit. Leave blank to use the workflow's built-in GITHUB_TOKEN for baseline checks. For full posture coverage, create a `SCANNING_PAT` secret and pass it here with `github_token: ${{ secrets.SCANNING_PAT \|\| secrets.GITHUB_TOKEN }}`. The PAT lets the kit verify admin-gated controls such as secret scanning, Dependabot alerts, and branch protection instead of reporting them as skipped. Walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough |
 | `enable_posture` | `true` | `true` to run the posture audit step. |
 | `enable_scanners` | `true` | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck). |
@@ -188,7 +191,7 @@ Walkthrough:
 
 ## Posture rule reference
 
-Severities can be overridden per rule in `.bos-scan.yml`.
+Severities can be overridden per rule in any global or repository config tier.
 
 | Rule  | Default | What it checks                                                                                          |
 | ----- | ------- | ------------------------------------------------------------------------------------------------------- |
@@ -239,7 +242,7 @@ kit.
 | actionlint | Lint GitHub Actions workflow syntax, expressions, and embedded shell usage. | MIT | https://github.com/rhysd/actionlint |
 | gitleaks | Detect secrets in the repository working tree. | MIT | https://github.com/gitleaks/gitleaks |
 | ShellCheck | Analyze shell scripts for correctness, quoting, and portability issues. | GPL-3.0 | https://www.shellcheck.net |
-| PyYAML | Parse `.bos-scan.yml` and related YAML configuration data. | MIT | https://pyyaml.org |
+| PyYAML | Parse the Marketplace, global, and repository YAML/JSON config tiers. | MIT | https://pyyaml.org |
 
 Only the tools listed above are executed by the current `action.yml`.
 
@@ -257,39 +260,64 @@ silently ignored.
 | Package managers  | `pip` · `pyproject` · `poetry` · `npm` · `yarn` · `pnpm` · `go modules` · `maven` · `gradle` · `cargo` · `bundler` · `nuget`       |
 | CodeQL targets    | `python` · `javascript-typescript` · `go` · `java-kotlin` · `csharp` · `ruby` · `rust` (mapped from detected languages)            |
 
-## 📝 `.bos-scan.yml` schema
+## 🏗️ Configuration inheritance and layering
 
-Every field is optional — the kit ships safe defaults. A
-representative full file:
+Configuration is merged in cascade order:
 
-### Remediation and AI summary controls
+1. **Marketplace config** — bundled at
+   `src/scan_kit/blackout-secure-code-scanning-kit-marketplace-config.yml`.
+   It contains conservative best-practice defaults and is always available.
+2. **Organization global config** — optional
+   `.github/blackout-secure-code-scanning-kit-global-config.yml`. `auto`
+   loads it when present, `true` requires it, and `false` disables it.
+3. **Repository config** — optional `.github/bos-universal-config.json`
+   (preferred), `.github/bos-universal-config.yml`, a root-level universal
+   config, or a legacy `.bos-scan.yml` file.
 
-The default path is deterministic and local-first. Remediation text is
-produced by the scanner kit itself and does not call external APIs
-unless the operator explicitly enables a provider-backed feature.
+Mappings are deep-merged. Scalars and lists from a lower tier replace the
+inherited value. Repository values therefore win over global values, while
+unmentioned nested policy remains inherited from the Marketplace baseline.
+All files are read from the installed action or destination checkout; config
+discovery does not fetch another repository.
+
+Universal config files place this kit's settings under `code_scanning`:
 
 ```yaml
-remediation:
-  enable_ai_findings_summary: false
-  ai_findings_summary_provider: ""
-  local_heuristic_fallback: true
+# .github/blackout-secure-code-scanning-kit-global-config.yml
+code_scanning:
+  owner: example-org
+  posture:
+    ghas:
+      require_secret_scanning: fail
+    branches:
+      main:
+        required_reviews: 2
 ```
 
-This keeps the default behavior safe:
+```json
+{
+  "code_scanning": {
+    "project_name": "payments-api",
+    "posture": {
+      "branches": {
+        "main": { "severity": "fail" }
+      }
+    }
+  }
+}
+```
 
-- no external model call unless `enable_ai_findings_summary: true`
-- no hidden runtime cost or secret requirement by default
-- local heuristic remediation remains available as the fallback path
-- provider-backed output is layered on top of the structured finding model
-  rather than replacing the underlying rule, severity, and SARIF evidence
+The result keeps `required_reviews: 2` from the global tier and applies
+`severity: fail` from the repo tier. A legacy `.bos-scan.yml` may remain flat;
+no `code_scanning` wrapper is required.
 
-## 📝 `.bos-scan.yml` schema
+## 📝 Config schema
 
-Every field is optional — the kit ships safe defaults. A
-representative full file:
+Every field is optional. This representative file can be used either as a
+flat `.bos-scan.yml` or nested under `code_scanning` in a universal config:
 
 ```yaml
-# .bos-scan.yml — Blackout Secure Code Scanning Kit config
+# .bos-scan.yml - repository overrides
 
 owner:        blackoutsecure
 project_name: my-action
@@ -308,12 +336,14 @@ posture:
     require_code_scanning:     warn   # fail | warn | skip
     require_secret_scanning:   warn
     require_dependabot_alerts: warn
+    require_push_protection:   warn
 
   workflows:
     require_permissions_block: warn
     forbid_write_all:          warn
-    require_pinned_actions:    warn   # PS012 — fail | warn | skip
+    require_pinned_actions:    warn   # PS012 - fail | warn | skip
     allow_tag_pin: []                 # owner/repo entries exempted from PS012 (e.g. ['actions/checkout'])
+    detect_msdo:                skip
 
   branches:
     main:
@@ -330,10 +360,16 @@ posture:
   codeowners:
     require_file:         warn
     validate_users_exist: false   # set true to probe each @user/@org-team via API
+
+remediation:
+  enable_ai_findings_summary: false
+  ai_findings_summary_provider: ""
+  local_heuristic_fallback: true
 ```
 
-Unknown top-level keys are ignored so that future kit versions can
-extend the schema without breaking older callers.
+Unknown keys are ignored so future kit versions and other sections in a
+universal config do not break existing callers. AI summaries remain opt-in;
+the default remediation path is local and deterministic.
 
 ## 💻 Local usage (CLI)
 
@@ -348,6 +384,15 @@ bos-scan detect --root .
 
 # Validate config
 bos-scan validate --root .
+
+# Require a custom organization config
+bos-scan validate \
+  --root . \
+  --global-config .github/org-code-scanning.yml \
+  --use-global-config
+
+# Ignore a conventional global config for one local run
+bos-scan validate --root . --no-global-config
 
 # Posture audit (requires GITHUB_TOKEN)
 export GITHUB_TOKEN=<your-token>

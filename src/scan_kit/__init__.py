@@ -3,7 +3,7 @@
 Public surface:
     scan_kit.__version__       Semantic version.
     scan_kit.cli.main          CLI entry point (also exposed as `bos-scan`).
-    scan_kit.config            `.bos-scan.yml` loader + defaults + validation.
+    scan_kit.config            Layered config loader + defaults + validation.
     scan_kit.detect            Ecosystem auto-detector.
     scan_kit.posture           GitHub REST-API posture auditor.
     scan_kit.sarif             SARIF merge helpers.
