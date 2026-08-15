@@ -4,14 +4,6 @@
       "at": "",
       "diff_score": 2,
       "published": false,
-      "running_total": 11,
-      "sha": "HEAD",
-      "source": "local"
-    },
-    {
-      "at": "",
-      "diff_score": 2,
-      "published": false,
       "running_total": 13,
       "sha": "HEAD",
       "source": "local"
@@ -159,9 +151,17 @@
       "running_total": 49,
       "sha": "HEAD",
       "source": "local"
+    },
+    {
+      "at": "",
+      "diff_score": 2,
+      "published": false,
+      "running_total": 51,
+      "sha": "HEAD",
+      "source": "local"
     }
   ],
   "last_reset_at": "",
   "last_reset_sha": "",
-  "running_total": 49
+  "running_total": 51
 }
