@@ -20,6 +20,14 @@ run-name: >-
     branches: [main, dev]
   push:
     branches: [main, dev]
+    # The relevance-gate/relevance-gate-reset jobs below commit back to
+    # this exact file. Without this, that commit is itself a push that
+    # re-triggers this workflow, which commits again — an infinite
+    # self-triggering loop (confirmed happening in production: dozens
+    # of "chore: update marketplace relevance score" commits in a row
+    # across every onboarded repo before this fix).
+    paths-ignore:
+      - '.github/marketplace-relevance-score.json'
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened]
