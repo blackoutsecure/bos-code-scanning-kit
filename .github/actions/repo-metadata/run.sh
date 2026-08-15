@@ -19,6 +19,7 @@
 set -euo pipefail
 
 : "${ERR_TITLE:=Marketplace repo-metadata}"
+: "${AI_MODEL:=auto}"
 
 HELPER_PY="${GITHUB_ACTION_PATH}/helper.py"
 [ -f "${HELPER_PY}" ] || die "internal: helper.py not found at ${HELPER_PY}"
@@ -51,6 +52,10 @@ validate_bool SHOW_RELEASES
 validate_bool SHOW_DEPLOYMENTS
 validate_bool SHOW_PACKAGES
 validate_bool DRY_RUN
+
+if [ -z "${AI_MODEL}" ] || [ "${AI_MODEL}" = "auto" ]; then
+  AI_MODEL="${GITHUB_MODELS_MODEL_METADATA:-${GITHUB_MODELS_MODEL:-openai/gpt-4o-mini}}"
+fi
 
 # ---------- Tool checks ------------------------------------------------------
 

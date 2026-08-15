@@ -148,7 +148,7 @@ inputs:
       GitHub Models model identifier (e.g. `openai/gpt-4o-mini`,
       `openai/gpt-4o`). Only consulted when `ai_enabled: true`.
     required: false
-    default: 'openai/gpt-4o-mini'
+    default: 'auto'
 
   # ----- Home-page widget toggles -----------------------------------------
   # Default reflects the "this is a release" framing: Releases ON,
