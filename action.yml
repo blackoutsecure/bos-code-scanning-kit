@@ -201,7 +201,12 @@ runs:
         [[ -n "${GH_CFG}" ]] && cfg_flags+=(--config "${GH_CFG}")
 
         # Always write the SARIF even on failure so the merge step
-        # has it for upload.
+        # has it for upload. Stderr is tee'd to a sidecar file so a
+        # config/auth-time failure (which produces no SARIF at all)
+        # still surfaces in the job summary instead of silently
+        # reading as "skipped" — see the summary step below.
+        ERROR_LOG="${GITHUB_WORKSPACE}/bos-scan-posture-error.log"
+        rm -f "${ERROR_LOG}"
         set +e
         bos-scan posture \
           --owner  "${GH_OWNER}" \
@@ -212,7 +217,8 @@ runs:
           --skips-json "${GITHUB_WORKSPACE}/bos-scan-posture-skips.json" \
           --fail-on "${FAIL_ON}" \
           --http-timeout "${HTTP_TIMEOUT}" \
-          "${cfg_flags[@]}"
+          "${cfg_flags[@]}" \
+          2> >(tee "${ERROR_LOG}" >&2)
         ec=$?
         set -e
 
@@ -469,6 +475,7 @@ runs:
         FAIL_ON:         ${{ inputs.fail_on }}
         TOKEN_INPUT_SUPPLIED: ${{ inputs.github_token != '' && 'true' || 'false' }}
         SARIF_PATH:      ${{ steps.merge.outputs.sarif_path }}
+        POSTURE_EXIT_CODE: ${{ steps.posture.outputs.exit_code }}
         GITHUB_TOKEN:    ${{ inputs.github_token || github.token }}
         CONFIG_PATH:     ${{ inputs.config }}
         GLOBAL_CONFIG_PATH: ${{ inputs.global_config_path }}
@@ -591,10 +598,28 @@ runs:
 
         rows = []
         any_err = any_find = False
+        posture_config_error = None
+        posture_exit_code = os.environ.get("POSTURE_EXIT_CODE", "")
+        if posture_exit_code not in ("", "0"):
+          error_log = pathlib.Path("bos-scan-posture-error.log")
+          if error_log.exists() and error_log.stat().st_size > 0:
+            posture_config_error = error_log.read_text().strip().splitlines()[-1]
+          else:
+            posture_config_error = f"posture exited {posture_exit_code} with no captured error message"
+
         for label, name, enabled in scanners:
             p = pathlib.Path(name)
             if not enabled:
                 rows.append((label, "skipped", "stage disabled"))
+                continue
+            if label == "Posture audit" and posture_config_error:
+                # A config/auth-time failure produces no SARIF at all — do
+                # not let that read as "skipped"; it must fail the run so
+                # a broken posture audit can never be mistaken for a clean
+                # bill of health.
+                rows.append((label, "failure", posture_config_error))
+                any_err = True
+                any_find = True
                 continue
             if not p.exists() or p.stat().st_size == 0:
                 rows.append((label, "skipped", "no SARIF produced"))
