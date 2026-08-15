@@ -366,6 +366,9 @@ jobs:
       topics: ${{ fromJson(needs.parse_config.outputs.cfg).marketplace.repo_metadata.topics || '' }}
       generate_topics: ${{ fromJson(needs.parse_config.outputs.cfg).marketplace.repo_metadata.generate_topics == true }}
       topics_fallback: ${{ fromJson(needs.parse_config.outputs.cfg).marketplace.repo_metadata.topics_fallback || '' }}
+      primary_category: ${{ fromJson(needs.parse_config.outputs.cfg).marketplace.repo_metadata.categories.primary || 'auto' }}
+      secondary_category: ${{ fromJson(needs.parse_config.outputs.cfg).marketplace.repo_metadata.categories.secondary || 'auto' }}
+      marketplace_slug: ${{ fromJson(needs.parse_config.outputs.cfg).marketplace.repo_metadata.marketplace_slug || '' }}
       ai_enabled: ${{ fromJson(needs.parse_config.outputs.cfg).marketplace.repo_metadata.ai_enabled != false }}
       ai_model: ${{ fromJson(needs.parse_config.outputs.cfg).marketplace.repo_metadata.ai_model || 'openai/gpt-4o-mini' }}
       show_releases: ${{ fromJson(needs.parse_config.outputs.cfg).marketplace.repo_metadata.show_releases != false }}

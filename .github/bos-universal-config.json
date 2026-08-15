@@ -33,7 +33,12 @@
       "enable": true,
       "homepage": "https://github.com/marketplace/actions/blackout-secure-code-scanning-kit",
       "generate_topics": true,
-      "topics_fallback": "github-actions code-scanning security sarif posture-audit gitleaks actionlint shellcheck composite-action devsecops github-advanced-security"
+      "topics_fallback": "github-actions code-scanning security sarif posture-audit gitleaks actionlint shellcheck composite-action devsecops github-advanced-security",
+      "categories": {
+        "primary": "auto",
+        "secondary": "auto"
+      },
+      "marketplace_slug": "blackout-secure-code-scanning-kit"
     }
   },
   "managed_file_sync": {
