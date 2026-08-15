@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, metadata as installed_metadata
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import metadata as installed_metadata
 
 from _version import __version__
 
