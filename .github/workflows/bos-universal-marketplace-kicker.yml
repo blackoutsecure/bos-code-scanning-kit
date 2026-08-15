@@ -274,6 +274,8 @@ jobs:
       dry_run: ${{ inputs.dry_run || false }}
       release_draft: ${{ inputs.draft || false }}
       publish_release: ${{ github.event_name != 'workflow_dispatch' || inputs.operation == 'release' }}
+      require_source_release: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'promote' && fromJson(needs.parse_config.outputs.cfg).marketplace.require_source_release != false }}
+      source_release_max_age_hours: ${{ fromJson(needs.parse_config.outputs.cfg).marketplace.source_release_max_age_hours || 168 }}
       # release_label (none/prerelease/latest, default auto) resolves the
       # GitHub Release's flags. "auto" reads the source branch: dev is
       # pre-release, main is the latest production release, anything else
