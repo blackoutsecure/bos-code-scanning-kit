@@ -6,9 +6,9 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
-
+from typing import Any
 
 GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference/chat/completions"
 
