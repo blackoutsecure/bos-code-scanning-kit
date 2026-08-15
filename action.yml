@@ -100,6 +100,14 @@ inputs:
     description: '`true` to upload the merged SARIF to GitHub Advanced Security.'
     required: false
     default: 'true'
+  category:
+    description: >-
+      Code Scanning category for the SARIF upload. Override this when a repo
+      runs the kit from more than one caller workflow for the same commit
+      (e.g. a PR gate AND a release pipeline) so the two uploads don't
+      collide under the same category and race/overwrite each other.
+    required: false
+    default: 'bos-code-scanning-kit'
 
   # ----- Failure policy -----
   fail_on:
@@ -451,7 +459,7 @@ runs:
       uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
       with:
         sarif_file: ${{ steps.merge.outputs.sarif_path }}
-        category:   bos-code-scanning-kit
+        category:   ${{ inputs.category }}
 
     # ----- 6. Build job summary + compute outcome ----------------------
     # Severity-aware verdict for the run, surfaced both as a
@@ -472,6 +480,7 @@ runs:
         ENABLE_POSTURE:  ${{ inputs.enable_posture }}
         ENABLE_SCANNERS: ${{ inputs.enable_scanners }}
         ENABLE_UPLOAD:   ${{ inputs.enable_upload }}
+        CATEGORY:        ${{ inputs.category }}
         FAIL_ON:         ${{ inputs.fail_on }}
         TOKEN_INPUT_SUPPLIED: ${{ inputs.github_token != '' && 'true' || 'false' }}
         SARIF_PATH:      ${{ steps.merge.outputs.sarif_path }}
@@ -700,7 +709,7 @@ runs:
         config_rows = [
             ("Posture audit", enabled(os.environ.get("ENABLE_POSTURE")), "Checks GitHub security settings, workflows, branch protection, and CODEOWNERS."),
             ("Bundled scanners", enabled(os.environ.get("ENABLE_SCANNERS")), "Runs actionlint, gitleaks, and shellcheck when matching files are present."),
-            ("SARIF upload", enabled(os.environ.get("ENABLE_UPLOAD")), f"{'Uploads' if upload_enabled else 'Does not upload'} merged findings to Code scanning category `bos-code-scanning-kit`; path: `{sarif_path}`."),
+            ("SARIF upload", enabled(os.environ.get("ENABLE_UPLOAD")), f"{'Uploads' if upload_enabled else 'Does not upload'} merged findings to Code scanning category `{os.environ.get('CATEGORY') or 'bos-code-scanning-kit'}`; path: `{sarif_path}`."),
             ("Failure policy", f"`{fail_on}`", "`fail` blocks on failure findings; `never` keeps the run advisory."),
             ("Token mode", token_mode, token_capability),
             ("Observed posture coverage", observed_coverage, "Use `SCANNING_PAT` if admin-gated checks are skipped."),
@@ -942,7 +951,7 @@ runs:
                     fh.write("\n### SARIF upload\n\n")
                     fh.write(
                         "The merged SARIF report was uploaded to this repository's "
-                        "**Security** tab under the category `bos-code-scanning-kit`. "
+                        f"**Security** tab under the category `{os.environ.get('CATEGORY') or 'bos-code-scanning-kit'}`. "
                         "Open **Security → Code scanning alerts** to review, assign, "
                         "dismiss, or track the findings over time.\n"
                     )
@@ -963,6 +972,8 @@ runs:
     - name: Enforce failure policy
       if: always() && inputs.fail_on != 'never' && steps.summary.outputs.outcome == 'failure'
       shell: bash
+      env:
+        CATEGORY: ${{ inputs.category }}
       run: |
-        echo "::error::bos-code-scanning-kit outcome=failure — at least one error-level finding. See the job summary for the per-stage breakdown, and the repo Security tab (category 'bos-code-scanning-kit') for details. Override with 'fail_on: never' (kit advisory mode) or 'security_scan_blocks_release: false' (launchpad)."
+        echo "::error::bos-code-scanning-kit outcome=failure — at least one error-level finding. See the job summary for the per-stage breakdown, and the repo Security tab (category '${CATEGORY}') for details. Override with 'fail_on: never' (kit advisory mode) or 'security_scan_blocks_release: false' (launchpad)."
         exit 1

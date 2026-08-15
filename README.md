@@ -195,6 +195,7 @@ the `commit` field of the GitHub Release JSON.
 | `enable_posture` | `true` | `true` to run the posture audit step. |
 | `enable_scanners` | `true` | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck). |
 | `enable_upload` | `true` | `true` to upload the merged SARIF to GitHub Advanced Security. |
+| `category` | `bos-code-scanning-kit` | Code Scanning category for the SARIF upload. Override this when a repo runs the kit from more than one caller workflow for the same commit (e.g. a PR gate AND a release pipeline) so the two uploads don't collide under the same category and race/overwrite each other. |
 | `fail_on` | `fail` | `fail` (default) — exit non-zero if posture has any FAIL findings or any scanner reports a result. `never` — collect findings but always exit 0 (useful for first-time rollouts). |
 | `http_timeout` | `20` | Per-request HTTP timeout (seconds) for the posture audit's GitHub REST calls. Default `20`. Each probe is independent, so the practical upper bound on a posture run is roughly `http_timeout` * number-of-probes (~10 on a baseline scan). Bump on self-hosted runners with slow egress, or to ride out brief GitHub API latency spikes that otherwise surface as `PS*** error: HTTP 502` rows. Bare integer string; no unit. |
 | `sarif_output` | `bos-scan.sarif` | Path for the merged SARIF artefact. |

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from ai import detect_provider
 
+"""Tests for AI provider detection and optional summarization."""
+
 
 def test_auto_detects_github_models_token():
     provider = detect_provider(environ={"GITHUB_MODELS_TOKEN": "token"})
