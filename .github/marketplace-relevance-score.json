@@ -111,9 +111,17 @@
       "running_total": 27,
       "sha": "HEAD",
       "source": "local"
+    },
+    {
+      "at": "",
+      "diff_score": 2,
+      "published": false,
+      "running_total": 29,
+      "sha": "HEAD",
+      "source": "local"
     }
   ],
   "last_reset_at": "",
   "last_reset_sha": "",
-  "running_total": 27
+  "running_total": 29
 }
