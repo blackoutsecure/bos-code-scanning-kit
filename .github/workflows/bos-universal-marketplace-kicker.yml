@@ -37,7 +37,7 @@ run-name: >-
         description: Marketplace operation.
         required: true
         type: choice
-        options: [validate, name-check, release, metadata]
+        options: [validate, name-check, promote, release, metadata]
         default: release
       tag_name:
         description: Optional SemVer release tag; empty auto-bumps the latest stable tag.
@@ -248,7 +248,7 @@ jobs:
       always()
       && needs.parse_config.result == 'success'
       && (
-        (github.event_name == 'workflow_dispatch' && inputs.operation == 'release')
+        (github.event_name == 'workflow_dispatch' && (inputs.operation == 'release' || inputs.operation == 'promote'))
         || (
           github.event_name == 'push'
           && needs.relevance-gate.result == 'success'
@@ -273,6 +273,7 @@ jobs:
       tag_name: ${{ inputs.tag_name }}
       dry_run: ${{ inputs.dry_run || false }}
       release_draft: ${{ inputs.draft || false }}
+      publish_release: ${{ github.event_name != 'workflow_dispatch' || inputs.operation == 'release' }}
       # release_label (none/prerelease/latest, default auto) resolves the
       # GitHub Release's flags. "auto" reads the source branch: dev is
       # pre-release, main is the latest production release, anything else
