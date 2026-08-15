@@ -1,11 +1,11 @@
-# Managed by Blackout Secure. Best practices applied via marketplace config, customized in .github/blackout-secure-managed-file-sync-global-config.json and .github/bos-universal-config.json.
+# Managed by Blackout Secure Managed File Sync — configure services in .github/bos-universal-config.json.
 # Do not edit — every sync run overwrites this file.
-# Blackout Secure universal sync kicker (hub-managed).
+# Blackout Secure managed file sync kicker (hub-managed).
 # Customize via `.github/bos-universal-config.json`, not this file.
 # Schema docs: https://github.com/blackoutsecure/bos-automation-hub
-name: Blackout Secure universal sync (kicker)
+name: Blackout Secure managed file sync (kicker)
 run-name: >-
-  Blackout Secure universal sync / ${{
+  Blackout Secure managed file sync / ${{
     github.event_name == 'workflow_dispatch'
       && format('manual ({0})', inputs.mode)
       || github.event_name == 'schedule'
@@ -38,16 +38,20 @@ jobs:
     outputs:
       target_ref: ${{ steps.target_ref.outputs.ref }}
     steps:
-      # `uses:` refs cannot be dynamic, so resolve which hub branch this
-      # run targets here and pick the matching static-ref job below.
+      - name: Checkout hub resolver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blackoutsecure/bos-automation-hub
+          ref: ${{ github.ref_name == 'dev' && 'dev' || 'main' }}
+          path: hub-runtime
+          sparse-checkout: .github/actions/shared/resolve-hub-ref
+          sparse-checkout-cone-mode: false
       - name: Resolve target hub ref
         id: target_ref
-        env:
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          ref="main"
-          [ "${REF_NAME}" = "dev" ] && ref="dev"
-          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+        uses: ./hub-runtime/.github/actions/shared/resolve-hub-ref
+        with:
+          event_name: ${{ github.event_name }}
+          ref_name: ${{ github.ref_name }}
 
   sync-dev:
     name: Sync managed files (dev)
