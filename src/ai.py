@@ -43,7 +43,11 @@ def detect_provider(
             return Provider(
                 name="github-models",
                 endpoint=env.get("GITHUB_MODELS_ENDPOINT", GITHUB_MODELS_ENDPOINT),
-                model=env.get("GITHUB_MODELS_MODEL", "openai/gpt-4o-mini"),
+                model=(
+                    env.get("GITHUB_MODELS_MODEL_CODE_SCANNING")
+                    or env.get("GITHUB_MODELS_MODEL")
+                    or "openai/gpt-4o-mini"
+                ),
                 token=token,
             )
         if name != "auto":
