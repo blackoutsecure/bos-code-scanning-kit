@@ -163,10 +163,16 @@ def _default_finding_remediation(rule_id: str, message: str) -> str:
         return "Enable Dependabot vulnerability alerts and configure automated dependency updates for the repository."
     if rule_id == "PS004":
         return "Enable secret-scanning push protection in repository security settings to block secrets before they are pushed."
-    if rule_id.startswith("PS01"):
-        return "Add or tighten the workflow permission block so the job only has the minimum required GitHub token permissions."
     if rule_id.startswith("PS012"):
         return "Pin third-party GitHub Action references to a fully qualified commit SHA and avoid floating tags or branches."
+    if rule_id == "PS013":
+        return (
+            "Add `microsoft/security-devops-action` to a workflow step and pin it "
+            "to a full commit SHA if Microsoft Security DevOps coverage is required; "
+            "otherwise leave PS013 disabled or skipped in the repository policy."
+        )
+    if rule_id.startswith("PS01"):
+        return "Add or tighten the workflow permission block so the job only has the minimum required GitHub token permissions."
     if rule_id.startswith("PS02"):
         return "Configure branch protection rules for the target branch, including required reviews and status checks where appropriate."
     if rule_id.startswith("PS03"):

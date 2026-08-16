@@ -243,6 +243,7 @@ def test_ps012_no_at_suffix_is_offender(tmp_path: Path):
     findings = posture_mod._scan_pinned_actions(tmp_path, cfg)
     target = [f for f in findings if f.rule_id == "PS012"]
     assert target and any(f.severity == "fail" for f in target)
+    assert "Pin third-party GitHub Action references" in target[0].remediation
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +259,8 @@ def test_ps013_default_skip_when_absent(tmp_path: Path):
     target = [f for f in findings if f.rule_id == "PS013"]
     assert len(target) == 1
     assert target[0].severity == "skip"
+    assert "microsoft/security-devops-action" in target[0].remediation
+    assert "workflow permission block" not in target[0].remediation
 
 
 def test_ps013_pass_with_details_when_sha_pinned(tmp_path: Path):
