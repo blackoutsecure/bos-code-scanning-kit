@@ -641,9 +641,9 @@ runs:
           else:
             posture_config_error = f"posture exited {posture_exit_code} with no captured error message"
 
-        for label, name, enabled in scanners:
+        for label, name, scanner_enabled in scanners:
             p = pathlib.Path(name)
-            if not enabled:
+          if not scanner_enabled:
                 rows.append((label, "skipped", "stage disabled"))
                 continue
             if label == "Posture audit" and posture_config_error:
