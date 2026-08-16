@@ -53,6 +53,14 @@ inputs:
       after marketplace defaults and before the repository config.
     required: false
     default: '.github/blackout-secure-code-scanning-kit-global-config.yml'
+  use_marketplace_config:
+    description: >-
+      `true` (default) applies the bundled marketplace baseline first, then
+      layers global/repository config on top. Set `false` to skip the
+      bundled baseline entirely and rely solely on your global/repository
+      config (falling back to the dataclass defaults for anything unset).
+    required: false
+    default: 'true'
   config:
     description: >-
       Repository config path. Defaults to `.github/bos-universal-config.json`,
@@ -205,6 +213,7 @@ runs:
         GH_REPO:  ${{ inputs.repo  || github.event.repository.name }}
         GH_USE_GLOBAL_CFG: ${{ inputs.use_global_config }}
         GH_GLOBAL_CFG: ${{ inputs.global_config_path }}
+        GH_USE_MARKETPLACE_CFG: ${{ inputs.use_marketplace_config }}
         GH_CFG:   ${{ inputs.config }}
         GH_TOKEN: ${{ inputs.github_token || github.token }}
         FAIL_ON:  ${{ inputs.fail_on }}
@@ -218,6 +227,14 @@ runs:
           false) cfg_flags+=(--no-global-config) ;;
           *)
             echo "::error::use_global_config must be 'auto', 'true', or 'false'" >&2
+            exit 2
+            ;;
+        esac
+        case "${GH_USE_MARKETPLACE_CFG}" in
+          true|'') ;;
+          false) cfg_flags+=(--no-marketplace-config) ;;
+          *)
+            echo "::error::use_marketplace_config must be 'true' or 'false'" >&2
             exit 2
             ;;
         esac
@@ -506,6 +523,7 @@ runs:
         CONFIG_PATH:     ${{ inputs.config }}
         GLOBAL_CONFIG_PATH: ${{ inputs.global_config_path }}
         USE_GLOBAL_CONFIG:  ${{ inputs.use_global_config }}
+        USE_MARKETPLACE_CONFIG: ${{ inputs.use_marketplace_config }}
         HTTP_TIMEOUT:     ${{ inputs.http_timeout }}
       run: |
         set -euo pipefail
@@ -772,11 +790,13 @@ runs:
         try:
           use_global = os.environ.get("USE_GLOBAL_CONFIG", "auto")
           use_global_value = {"true": True, "false": False}.get(use_global)
+          use_marketplace_value = os.environ.get("USE_MARKETPLACE_CONFIG", "true") != "false"
           resolved_config = resolve_config(
             pathlib.Path.cwd(),
             config_path=os.environ.get("CONFIG_PATH") or None,
             global_config_path=os.environ.get("GLOBAL_CONFIG_PATH") or None,
             use_global_config=use_global_value,
+            use_marketplace_config=use_marketplace_value,
           )
           remediation = resolved_config.remediation
           if remediation.enable_ai_findings_summary:
@@ -819,7 +839,7 @@ runs:
             for record in records:
                 fh.write("| " + " | ".join(md_escape(value) for value in row_fn(record)) + " |\n")
 
-          severity_badge = {
+        severity_badge = {
             "pass": "✅",
             "warn": "⚠️",
             "fail": "🔴",
@@ -827,14 +847,14 @@ runs:
             "skip": "⚪",
             "warning": "⚠️",
             "note": "ℹ️",
-          }
-          result_badge = {
+        }
+        result_badge = {
             "success": "✅",
             "warn": "⚠️",
             "failure": "🔴",
             "incomplete": "⚪",
             "skipped": "➖",
-          }
+        }
 
         # ─── Console echo ────────────────────────────────────────────
         # Mirror the per-stage table + outcome to the runner log too.

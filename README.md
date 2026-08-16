@@ -190,8 +190,9 @@ the `commit` field of the GitHub Release JSON.
 | `repo` | _(none)_ | GitHub repo name being scanned. Defaults to the workflow context. |
 | `use_global_config` | `auto` | `auto` loads the organization-level global config when present. `true` requires it; `false` disables it. |
 | `global_config_path` | `.github/blackout-secure-code-scanning-kit-global-config.yml` | Organization-level config path. Loaded automatically when present, after marketplace defaults and before the repository config. |
+| `use_marketplace_config` | `true` | `true` (default) applies the bundled marketplace baseline first, then layers global/repository config on top. Set `false` to skip the bundled baseline entirely and rely solely on your global/repository config (falling back to the dataclass defaults for anything unset). |
 | `config` | _(none)_ | Repository config path. Defaults to `.github/bos-universal-config.json`, `.github/bos-universal-config.yml`, then legacy `.bos-scan.yml` discovery. |
-| `github_token` | _(none)_ | GitHub token for the posture audit. Leave blank to use the workflow's built-in GITHUB_TOKEN for baseline checks. For full posture coverage, create a `SCANNING_PAT` secret and pass it here with `github_token: ${{ secrets.SCANNING_PAT \|\| secrets.GITHUB_TOKEN }}`. The PAT lets the kit verify admin-gated controls such as secret scanning, Dependabot alerts, and branch protection instead of reporting them as skipped. Walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough |
+| `github_token` | _(none)_ | GitHub token for the posture audit. Leave blank to use the workflow's built-in GITHUB_TOKEN for baseline checks. For full posture coverage, create a `SCANNING_PAT` secret and pass it here with `github_token: <SCANNING_PAT-or-GITHUB_TOKEN>`. The PAT lets the kit verify admin-gated controls such as secret scanning, Dependabot alerts, and branch protection instead of reporting them as skipped. Walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough |
 | `enable_posture` | `true` | `true` to run the posture audit step. |
 | `enable_scanners` | `true` | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck). |
 | `enable_upload` | `true` | `true` to upload the merged SARIF to GitHub Advanced Security. |
@@ -210,6 +211,7 @@ the `commit` field of the GitHub Release JSON.
 <!-- BEGIN action-outputs -->
 | Output | Description |
 | --- | --- |
+| `quality_applicability` | JSON object describing whether Node, Python, and Shell quality gates apply to the checked-out repository and why. |
 | `sarif_path` | Path to the merged SARIF file produced by the run. |
 | `posture_failures` | Number of FAIL findings from the posture audit. |
 | `recommendations_path` | Path to structured posture remediation recommendations. |
@@ -359,7 +361,8 @@ Configuration is merged in cascade order:
   pinned third-party actions. It also enables opportunistic AI triage with a
   deterministic fallback. It does not select branches, require CODEOWNERS,
   validate identities through the API, or add scanner exclusions on behalf
-  of every repository.
+  of every repository. Set `use_marketplace_config: false` to skip this tier
+  entirely and start from the plain dataclass defaults instead.
 2. **Organization global config** — optional
    `.github/blackout-secure-code-scanning-kit-global-config.yml`. `auto`
    loads it when present, `true` requires it, and `false` disables it.

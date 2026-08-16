@@ -60,6 +60,20 @@ def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
         default="",
         help="Explicit repository config path (default: auto-discover under --root).",
     )
+    marketplace_config = parser.add_mutually_exclusive_group()
+    marketplace_config.add_argument(
+        "--use-marketplace-config",
+        action="store_true",
+        dest="use_marketplace_config",
+        help="Apply the bundled marketplace baseline config first (default).",
+    )
+    marketplace_config.add_argument(
+        "--no-marketplace-config",
+        action="store_false",
+        dest="use_marketplace_config",
+        help="Skip the bundled marketplace baseline; rely on global/repo config only.",
+    )
+    parser.set_defaults(use_marketplace_config=True)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -183,6 +197,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
             config_path=args.config or None,
             global_config_path=args.global_config,
             use_global_config=args.use_global_config,
+            use_marketplace_config=args.use_marketplace_config,
         )
     except cfg_mod.ConfigError as exc:
         sys.stderr.write(f"error: {exc}\n")
@@ -218,6 +233,7 @@ def cmd_posture(args: argparse.Namespace) -> int:
             config_path=args.config or None,
             global_config_path=args.global_config,
             use_global_config=args.use_global_config,
+            use_marketplace_config=args.use_marketplace_config,
             repo_name=args.repo,
         )
     except cfg_mod.ConfigError as exc:
