@@ -80,7 +80,7 @@ inputs:
       GitHub token for the posture audit. Leave blank to use the workflow's
       built-in GITHUB_TOKEN for baseline checks. For full posture coverage,
       create a `SCANNING_PAT` secret and pass it here with
-      `github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}`.
+      `github_token: <SCANNING_PAT-or-GITHUB_TOKEN>`.
       The PAT lets the kit verify admin-gated controls such as secret scanning,
       Dependabot alerts, and branch protection instead of reporting them as
       skipped. Walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough
@@ -952,7 +952,7 @@ runs:
                         "read access for this repository.\n"
                     )
                     fh.write(
-                        "3. Pass it to the kit with `github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}`.\n\n"
+                        "3. Pass it to the kit with `github_token: <SCANNING_PAT-or-GITHUB_TOKEN>`.\n\n"
                     )
                     fh.write(
                         "Follow the official walkthrough in the "
