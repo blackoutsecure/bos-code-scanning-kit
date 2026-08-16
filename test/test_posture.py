@@ -493,9 +493,10 @@ def test_summary_markdown_includes_summary_and_remediation_columns():
     assert "**Verdict:** Advisory review recommended" in summary
     assert "**Totals:**" in summary
     assert "## Recommended Actions" in summary
-    assert "#### Findings Requiring Attention" in summary
-    assert "| Rule | Severity | Location | Control | Evidence | Recommended Remediation |" in summary
-    assert "| `PS010` | ⚠️ Warning | .github/workflows/ci.yml | Workflow permissions are declared |" in summary
+    assert "#### `.github/workflows/ci.yml`" in summary
+    assert "**Findings requiring attention**" in summary
+    assert "| Rule | Severity | Control | Evidence | Recommended Remediation |" in summary
+    assert "| `PS010` | ⚠️ Warning | Workflow permissions are declared |" in summary
     assert "Set a top-level permissions block" in summary
 
 
@@ -512,9 +513,10 @@ def test_summary_markdown_omits_remediation_for_passed_findings():
         )
     )
     summary = result.summary_markdown()
-    assert "#### Passed Controls" in summary
-    assert "| Rule | Severity | Location | Control | Evidence |" in summary
-    assert "| `PS011` | ✅ Pass | .github/workflows/ci.yml | Workflow write access is restricted |" in summary
+    assert "#### `.github/workflows/ci.yml`" in summary
+    assert "**Passed controls**" in summary
+    assert "| Rule | Severity | Control | Evidence |" in summary
+    assert "| `PS011` | ✅ Pass | Workflow write access is restricted |" in summary
     assert "Tighten workflow permissions." not in summary
 
 
@@ -525,6 +527,33 @@ def test_summary_markdown_handles_no_findings():
     assert "## Summary" in summary
     assert "**Verdict:** Controls passed" in summary
     assert "_No findings were emitted by the configured audit controls._" in summary
+
+
+def test_summary_markdown_groups_workflow_findings_by_file():
+    result = posture_mod.AuditResult(
+        findings=(
+            posture_mod.Finding(
+                "PS010",
+                "pass",
+                "Workflow permissions are declared.",
+                location=".github/workflows/ci.yml",
+                remediation="Add a permissions block.",
+            ),
+            posture_mod.Finding(
+                "PS011",
+                "warn",
+                "Workflow uses broad write access.",
+                location=".github/workflows/ci.yml",
+                remediation="Reduce write permissions.",
+            ),
+        )
+    )
+    summary = result.summary_markdown()
+    assert "### Workflow and action files" in summary
+    assert "#### `.github/workflows/ci.yml`" in summary
+    assert "**Findings requiring attention**" in summary
+    assert "**Passed controls**" in summary
+    assert "| Location |" not in summary.split("### Workflow and action files", 1)[1]
 
 
 def test_ps001_skip_when_default_setup_forbidden_and_no_advanced_analyses():
