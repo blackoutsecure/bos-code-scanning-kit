@@ -1017,8 +1017,15 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
                 ))
             elif status == 403:
                 # Token-scope limitation — see PS001 comment above.
-                out.append(Finding("PS002", "skip",
-                                   "secret scanning probe forbidden — token needs `admin:org` or repo admin (provide a PAT to check)"))
+                out.append(Finding(
+                    "PS002", "skip",
+                    "secret scanning probe forbidden — token cannot read the secret-scanning endpoint (403)",
+                    remediation=(
+                        "Provide SCANNING_PAT with Secret scanning alerts: read and repository "
+                        "Administration: read access, then rerun the audit. Only after the setting "
+                        "is readable should secret scanning be enabled or existing alerts remediated."
+                    ),
+                ))
             else:
                 out.append(Finding("PS002", "error",
                                    f"secret scanning probe returned unexpected status {status}"))
@@ -1041,8 +1048,15 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
             ))
         elif status == 403:
             # Token-scope limitation — see PS001 comment above.
-            out.append(Finding("PS003", "skip",
-                               "Dependabot probe forbidden — token needs `repo:admin` (provide a PAT to check)"))
+            out.append(Finding(
+                "PS003", "skip",
+                "Dependabot probe forbidden — token cannot read vulnerability-alert settings (403)",
+                remediation=(
+                    "Provide SCANNING_PAT with Dependabot alerts: read and repository Administration: read "
+                    "access, then rerun the audit. If the setting is then confirmed disabled, enable "
+                    "Dependabot alerts in Settings → Code security."
+                ),
+            ))
         else:
             out.append(Finding("PS003", "error",
                                f"Dependabot probe returned unexpected status {status}"))
@@ -1066,7 +1080,11 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
             if not isinstance(sa, dict) or "secret_scanning_push_protection" not in sa:
                 out.append(Finding(
                     "PS004", "skip",
-                    "push-protection probe needs repo admin — `security_and_analysis` not visible to this token",
+                    "push-protection probe needs repository administration access — `security_and_analysis` is not visible",
+                    remediation=(
+                        "Provide SCANNING_PAT with repository Administration: read access, then rerun the audit. "
+                        "Only after the setting is readable should secret-scanning push protection be enabled."
+                    ),
                 ))
             else:
                 pp_status = (sa.get("secret_scanning_push_protection") or {}).get("status")
@@ -1084,7 +1102,11 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
         elif repo_status == 403:
             out.append(Finding(
                 "PS004", "skip",
-                "push-protection probe forbidden — token needs `repo` (admin) (provide a PAT to check)",
+                "push-protection probe forbidden — token cannot read repository security settings (403)",
+                remediation=(
+                    "Provide SCANNING_PAT with repository Administration: read access, then rerun the audit. "
+                    "Only after the setting is readable should secret-scanning push protection be enabled."
+                ),
             ))
         else:
             out.append(Finding(
