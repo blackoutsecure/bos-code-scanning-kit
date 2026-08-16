@@ -23,6 +23,7 @@ SAML SSO not authorized). Reads ONLY — never mutates repo state.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import re
 import time
@@ -199,6 +200,7 @@ class Finding:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "finding_key": self.finding_key,
             "rule_id": self.rule_id,
             "severity": self.severity,
             "title": self.title,
@@ -210,6 +212,26 @@ class Finding:
             "remediation_confidence": self.remediation_confidence,
             "remediation_source": self.remediation_source,
             "provider": self.provider,
+        }
+
+    @property
+    def finding_key(self) -> str:
+        """Return an identity that remains stable as recommendation text changes."""
+        identity = f"{self.rule_id}|{self.location or '(repository)'}"
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        return f"{self.rule_id.lower()}-{digest}"
+
+    def recommendation_dict(self) -> dict[str, str]:
+        """Return the machine-readable recommendation contract for this finding."""
+        return {
+            "finding_key": self.finding_key,
+            "rule_id": self.rule_id,
+            "title": self.title,
+            "location": self.location,
+            "recommendation": self.remediation,
+            "confidence": self.remediation_confidence,
+            "source": self.remediation_source,
+            "patch_status": "unavailable",
         }
 
 
@@ -281,10 +303,38 @@ class AuditResult:
         ])
 
         if not self.findings:
+            lines.extend([
+                "## Recommendations",
+                "",
+                "| Finding Key | Rule | Location | Recommendation Status | Open PR |",
+                "| ----------- | ---- | -------- | --------------------- | ------- |",
+                "| — | — | — | none | No PR |",
+                "",
+            ])
             lines.append("## Detailed Findings")
             lines.append("")
             lines.append("_No findings were emitted by the configured audit controls._")
             return "\n".join(lines) + "\n"
+
+        recommendations = [
+            f.recommendation_dict()
+            for f in self.findings
+            if f.severity != "pass" and f.remediation.strip()
+        ]
+        lines.extend([
+            "## Recommendations",
+            "",
+            "| Finding Key | Rule | Location | Recommendation Status | Open PR |",
+            "| ----------- | ---- | -------- | --------------------- | ------- |",
+        ])
+        lines.extend(
+            f"| `{item['finding_key']}` | `{item['rule_id']}` | {_md_escape(item['location'] or '—')} | "
+            f"`{item['patch_status']}` | No PR |"
+            for item in recommendations
+        )
+        if not recommendations:
+            lines.append("| — | — | — | none | No PR |")
+        lines.append("")
 
         buckets: dict[int, list[Finding]] = {}
         for f in self.findings:

@@ -149,6 +149,9 @@ outputs:
   posture_failures:
     description: 'Number of FAIL findings from the posture audit.'
     value: ${{ steps.posture.outputs.failures }}
+  recommendations_path:
+    description: 'Path to structured posture remediation recommendations.'
+    value: ${{ steps.posture.outputs.recommendations_path }}
   outcome:
     description: >-
       Severity-tier verdict for the run: `success` (no findings at any
@@ -235,6 +238,7 @@ runs:
           --root   "${GITHUB_WORKSPACE}" \
           --sarif  "${GITHUB_WORKSPACE}/bos-scan-posture.sarif" \
           --skips-json "${GITHUB_WORKSPACE}/bos-scan-posture-skips.json" \
+          --recommendations-json "${GITHUB_WORKSPACE}/bos-scan-recommendations.json" \
           --fail-on "${FAIL_ON}" \
           --http-timeout "${HTTP_TIMEOUT}" \
           "${cfg_flags[@]}" \
@@ -263,6 +267,7 @@ runs:
           fails=0
         fi
         echo "failures=${fails}" >> "${GITHUB_OUTPUT}"
+        echo "recommendations_path=${GITHUB_WORKSPACE}/bos-scan-recommendations.json" >> "${GITHUB_OUTPUT}"
 
         # Defer hard failure to the merge step so SARIF still uploads.
         # We record the exit code as a step output instead.
