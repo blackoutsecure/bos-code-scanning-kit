@@ -381,7 +381,7 @@ jobs:
       models: read
     uses: blackoutsecure/bos-automation-hub/.github/workflows/repo-metadata-sync.yml@main
     with:
-      checkout_ref: ${{ (inputs.operation == 'release' || github.event_name == 'push') && needs.release.outputs.tag_name || (fromJson(needs.parse_config.outputs.cfg || '{}').marketplace.target_branch || 'main') }}
+      checkout_ref: ${{ needs.release.result == 'success' && needs.release.outputs.tag_name || (fromJson(needs.parse_config.outputs.cfg || '{}').marketplace.target_branch || 'main') }}
       description: ${{ fromJson(needs.parse_config.outputs.cfg || '{}').marketplace.repo_metadata.description || '' }}
       description_mode: ${{ fromJson(needs.parse_config.outputs.cfg || '{}').marketplace.repo_metadata.description_mode || 'auto' }}
       description_fallback: ${{ fromJson(needs.parse_config.outputs.cfg || '{}').marketplace.repo_metadata.description_fallback || '' }}
