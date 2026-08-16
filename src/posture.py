@@ -336,9 +336,14 @@ class AuditResult:
             lines.append("| — | — | — | none | No PR |")
         lines.append("")
 
+        def is_file_finding(finding: Finding) -> bool:
+            location = finding.location or ""
+            return location.startswith((".github/workflows/", ".github/actions/"))
+
         buckets: dict[int, list[Finding]] = {}
         for f in self.findings:
-            buckets.setdefault(_family_for(f.rule_id), []).append(f)
+            if not is_file_finding(f):
+                buckets.setdefault(_family_for(f.rule_id), []).append(f)
 
         for idx, (_, header, blurb) in enumerate(_RULE_FAMILIES):
             rows = buckets.get(idx)
@@ -379,6 +384,46 @@ class AuditResult:
                         f"{_md_escape(title)} | {_md_escape(f.message)} |"
                     )
                 lines.append("")
+
+        file_findings = [f for f in self.findings if is_file_finding(f)]
+        if file_findings:
+            if not any(line == "## Detailed Findings" for line in lines):
+                lines.append("## Detailed Findings")
+                lines.append("")
+            lines.append("### Workflow and action files")
+            lines.append("_Per-file workflow and composite-action audit results._")
+            lines.append("")
+            by_file: dict[str, list[Finding]] = {}
+            for finding in file_findings:
+                by_file.setdefault(finding.location or "—", []).append(finding)
+            for location, rows in sorted(by_file.items()):
+                lines.append(f"#### `{_md_escape(location)}`")
+                lines.append("")
+                attention = [f for f in rows if f.severity != "pass"]
+                passed = [f for f in rows if f.severity == "pass"]
+                if attention:
+                    lines.append("**Findings requiring attention**")
+                    lines.append("")
+                    lines.append("| Rule | Severity | Control | Evidence | Recommended Remediation |")
+                    lines.append("| ---- | -------- | ------- | -------- | ----------------------- |")
+                    for finding in attention:
+                        lines.append(
+                            f"| `{finding.rule_id}` | {_severity_label(finding.severity)} | "
+                            f"{_md_escape(finding.title or '—')} | {_md_escape(finding.message)} | "
+                            f"{_md_escape(_display_remediation(finding))} |"
+                        )
+                    lines.append("")
+                if passed:
+                    lines.append("**Passed controls**")
+                    lines.append("")
+                    lines.append("| Rule | Severity | Control | Evidence |")
+                    lines.append("| ---- | -------- | ------- | -------- |")
+                    for finding in passed:
+                        lines.append(
+                            f"| `{finding.rule_id}` | {_severity_label(finding.severity)} | "
+                            f"{_md_escape(finding.title or '—')} | {_md_escape(finding.message)} |"
+                        )
+                    lines.append("")
 
         misc = buckets.get(-1)
         if misc:
