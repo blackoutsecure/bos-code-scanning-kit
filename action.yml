@@ -746,6 +746,11 @@ runs:
                 all_annotations.extend(sarif_results(source, sarif_name))
 
         scanner_annotations = [r for r in all_annotations if r["source"] != "Posture audit"]
+        annotation_counts = {
+          "error": sum(r["severity"] == "error" for r in scanner_annotations),
+          "warning": sum(r["severity"] in ("warning", "warn") for r in scanner_annotations),
+          "notice": sum(r["severity"] in ("note", "notice") for r in scanner_annotations),
+        }
         posture_attention = [f for f in posture_findings if f.get("severity") not in ("pass", "skip")]
         posture_passed = [f for f in posture_findings if f.get("severity") == "pass"]
         posture_skipped = [f for f in posture_findings if f.get("severity") == "skip"]
@@ -890,6 +895,13 @@ runs:
                 for label, result, detail in rows:
                   badge = result_badge.get(result, "ℹ️")
                   fh.write(f"| {label} | {badge} **{result}** | {detail} |\n")
+                fh.write(
+                  f"\n**Annotation assessment:** 🔴 {annotation_counts['error']} errors · "
+                  f"⚠️ {annotation_counts['warning']} warnings · "
+                  f"ℹ️ {annotation_counts['notice']} notices. "
+                  "Scanner annotations are included below and contribute to the owning stage result; "
+                  "GitHub runtime annotations remain linked from the Actions run.\n"
+                )
                 fh.write(f"\n**Outcome:** `{outcome}` — {verdict}\n")
                 if ai_summary:
                   fh.write("\n### AI triage summary\n\n")
