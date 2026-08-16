@@ -643,7 +643,7 @@ runs:
 
         for label, name, scanner_enabled in scanners:
             p = pathlib.Path(name)
-          if not scanner_enabled:
+            if not scanner_enabled:
                 rows.append((label, "skipped", "stage disabled"))
                 continue
             if label == "Posture audit" and posture_config_error:
