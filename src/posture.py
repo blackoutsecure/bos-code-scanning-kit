@@ -1121,6 +1121,19 @@ def _audit_one_branch(
                            f"branch `{branch}` has no protection rules", location=loc))
         return out
 
+    if status == 403:
+        out.append(Finding(
+            "PS020",
+            "skip",
+            f"branch `{branch}` protection check was forbidden — token scope is insufficient",
+            location=loc,
+            remediation=(
+                "Re-run with SCANNING_PAT or another token that has repository "
+                "Administration: read access so branch protection can be assessed."
+            ),
+        ))
+        return out
+
     if status != 200 or not isinstance(body, dict):
         out.append(Finding("PS020", "error",
                            f"could not read protection for `{branch}` (status {status})",

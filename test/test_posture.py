@@ -819,6 +819,18 @@ def test_ps020_warns_when_branch_unprotected():
     assert any(f.rule_id == "PS020" and f.severity == "warn" for f in out)
 
 
+def test_ps020_skips_when_branch_protection_is_forbidden():
+    fake = FakeGitHub({
+        "/repos/o/r/branches/main/protection": (None, 403),
+    })
+    out = posture_mod._audit_one_branch(fake, "o", "r", "main", BranchPosture())
+    target = [f for f in out if f.rule_id == "PS020"]
+    assert target and target[0].severity == "skip"
+    assert "forbidden" in target[0].message
+    assert "SCANNING_PAT" in target[0].remediation
+    assert not any(f.rule_id in {"PS021", "PS022", "PS023", "PS024", "PS025"} for f in out)
+
+
 def test_ps021_pass_when_reviews_meet_threshold():
     fake = FakeGitHub({
         "/repos/o/r/branches/main/protection": (_full_protection(reviews=2), 200),
