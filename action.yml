@@ -511,12 +511,18 @@ runs:
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}"
         python3 - <<'PY'
-        import json, os, pathlib, sys
-
-        sys.path.insert(0, str(pathlib.Path(os.environ["GITHUB_ACTION_PATH"]) / "src"))
+        import importlib.util, json, os, pathlib, sys
 
         from ai import detect_provider, summarize as summarize_with_ai
-        from config import resolve
+
+        action_config_path = pathlib.Path(os.environ["GITHUB_ACTION_PATH"]) / "src" / "config.py"
+        config_spec = importlib.util.spec_from_file_location("bos_code_scanning_config", action_config_path)
+        if config_spec is None or config_spec.loader is None:
+          raise RuntimeError(f"Unable to load code-scanning config module: {action_config_path}")
+        config_module = importlib.util.module_from_spec(config_spec)
+        sys.modules["bos_code_scanning_config"] = config_module
+        config_spec.loader.exec_module(config_module)
+        resolve_config = config_module.resolve
 
         def md_escape(value):
             return str(value).replace("|", "\\|").replace("\n", " ")
@@ -761,7 +767,7 @@ runs:
         try:
           use_global = os.environ.get("USE_GLOBAL_CONFIG", "auto")
           use_global_value = {"true": True, "false": False}.get(use_global)
-          resolved_config = resolve(
+          resolved_config = resolve_config(
             pathlib.Path.cwd(),
             config_path=os.environ.get("CONFIG_PATH") or None,
             global_config_path=os.environ.get("GLOBAL_CONFIG_PATH") or None,
