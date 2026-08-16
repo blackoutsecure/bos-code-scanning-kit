@@ -819,7 +819,7 @@ runs:
             for record in records:
                 fh.write("| " + " | ".join(md_escape(value) for value in row_fn(record)) + " |\n")
 
-          severity_badge = {
+        severity_badge = {
             "pass": "✅",
             "warn": "⚠️",
             "fail": "🔴",
@@ -827,14 +827,14 @@ runs:
             "skip": "⚪",
             "warning": "⚠️",
             "note": "ℹ️",
-          }
-          result_badge = {
+        }
+        result_badge = {
             "success": "✅",
             "warn": "⚠️",
             "failure": "🔴",
             "incomplete": "⚪",
             "skipped": "➖",
-          }
+        }
 
         # ─── Console echo ────────────────────────────────────────────
         # Mirror the per-stage table + outcome to the runner log too.
