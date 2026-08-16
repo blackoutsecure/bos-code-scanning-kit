@@ -616,6 +616,8 @@ def test_ps004_skip_on_403():
         f.rule_id == "PS004" and f.severity == "skip" and "forbidden" in f.message
         for f in out
     )
+    target = [f for f in out if f.rule_id == "PS004"]
+    assert "Administration: read" in target[0].remediation
 
 
 def test_ps002_skip_on_403():
@@ -636,6 +638,8 @@ def test_ps002_skip_on_403():
         f.rule_id == "PS002" and f.severity == "skip" and "forbidden" in f.message
         for f in out
     )
+    target = [f for f in out if f.rule_id == "PS002"]
+    assert "Secret scanning alerts: read" in target[0].remediation
 
 
 def test_skip_severities_skip_api_calls():
