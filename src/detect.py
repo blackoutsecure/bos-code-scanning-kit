@@ -58,7 +58,7 @@ LANG_EXT: dict[str, tuple[str, ...]] = {
     "csharp":     (".cs",),
     "ruby":       (".rb",),
     "rust":       (".rs",),
-    "shell":      (".sh", ".bash"),
+    "shell":      (".sh", ".bash", ".bats"),
     "c":          (".c", ".h"),
     "cpp":        (".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"),
     "swift":      (".swift",),
@@ -137,12 +137,56 @@ class Detection:
                 seen.append(mapped)
         return tuple(seen)
 
+    def quality_applicability(self) -> dict[str, dict[str, object]]:
+        """Describe whether the shared quality gates apply to this tree."""
+        node_signals = sorted(
+            {
+                *(
+                    language
+                    for language in self.languages
+                    if language in {"javascript", "typescript"}
+                ),
+                *(manager for manager in self.package_managers if manager in {"npm", "yarn", "pnpm"}),
+            }
+        )
+        python_signals = sorted(
+            {
+                *({"python"} if "python" in self.languages else set()),
+                *(manager for manager in self.package_managers if manager in {"pip", "pyproject", "poetry"}),
+            }
+        )
+        shell_signals = sorted(
+            {"shell"}
+            if "shell" in self.languages or "shell" in self.artifact_types
+            else set()
+        )
+
+        def result(signals: list[str], label: str) -> dict[str, object]:
+            if signals:
+                return {
+                    "applicable": True,
+                    "signals": signals,
+                    "reason": f"{label} signals detected: {', '.join(signals)}.",
+                }
+            return {
+                "applicable": False,
+                "signals": [],
+                "reason": f"No {label} source or package metadata detected.",
+            }
+
+        return {
+            "node": result(node_signals, "Node"),
+            "python": result(python_signals, "Python"),
+            "shell": result(shell_signals, "Shell"),
+        }
+
     def to_dict(self) -> dict[str, object]:
         return {
             "languages": list(self.languages),
             "artifact_types": list(self.artifact_types),
             "package_managers": list(self.package_managers),
             "files_scanned": self.files_scanned,
+            "quality_applicability": self.quality_applicability(),
         }
 
 

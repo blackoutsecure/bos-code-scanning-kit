@@ -138,6 +138,11 @@ inputs:
     default: 'bos-scan.sarif'
 
 outputs:
+  quality_applicability:
+    description: >-
+      JSON object describing whether Node, Python, and Shell quality gates
+      apply to the checked-out repository and why.
+    value: ${{ steps.detect.outputs.quality_applicability }}
   sarif_path:
     description: 'Path to the merged SARIF file produced by the run.'
     value: ${{ steps.merge.outputs.sarif_path }}
@@ -178,7 +183,14 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        bos-scan detect --root "${GITHUB_WORKSPACE}"
+        detection_json="$(bos-scan detect --root "${GITHUB_WORKSPACE}" --json)"
+        printf '%s\n' "${detection_json}"
+        quality_json="$(python3 -c 'import json, sys; print(json.dumps(json.loads(sys.argv[1])["quality_applicability"], separators=(",", ":")))' "${detection_json}")"
+        {
+          echo 'quality_applicability<<__BOS_QUALITY__'
+          echo "${quality_json}"
+          echo '__BOS_QUALITY__'
+        } >> "${GITHUB_OUTPUT}"
 
     # ----- 2. Posture audit (Python) ------------------------------------
     - id: posture

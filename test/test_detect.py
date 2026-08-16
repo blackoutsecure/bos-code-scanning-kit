@@ -103,6 +103,35 @@ def test_shell_detected(tmp_path: Path):
     assert "shell" in result.languages
 
 
+def test_quality_applicability_reports_detected_code_types(tmp_path: Path):
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "main.py").write_text("print('hi')\n")
+    (tmp_path / "build.sh").write_text("#!/bin/sh\necho hi\n")
+
+    applicability = detect_mod.detect(tmp_path).quality_applicability()
+
+    assert applicability["node"]["applicable"] is True
+    assert applicability["python"]["applicable"] is True
+    assert applicability["shell"]["applicable"] is True
+
+
+def test_quality_applicability_explains_not_applicable_types(tmp_path: Path):
+    applicability = detect_mod.detect(tmp_path).quality_applicability()
+
+    for quality in ("node", "python", "shell"):
+        assert applicability[quality]["applicable"] is False
+        assert "No " in applicability[quality]["reason"]
+
+
+def test_bats_is_shell_quality_signal(tmp_path: Path):
+    (tmp_path / "smoke.bats").write_text("#!/usr/bin/env bats\n@test 'works' { true; }\n")
+
+    applicability = detect_mod.detect(tmp_path).quality_applicability()
+
+    assert "shell" in detect_mod.detect(tmp_path).languages
+    assert applicability["shell"]["applicable"] is True
+
+
 def test_kubernetes_detected(tmp_path: Path):
     (tmp_path / "k8s").mkdir()
     (tmp_path / "k8s" / "deploy.yaml").write_text("kind: Deployment\n")
@@ -156,5 +185,11 @@ def test_to_dict_shape(tmp_path: Path):
     (tmp_path / "main.py").write_text("x = 1\n")
     result = detect_mod.detect(tmp_path)
     d = result.to_dict()
-    assert set(d) == {"languages", "artifact_types", "package_managers", "files_scanned"}
+    assert set(d) == {
+        "languages",
+        "artifact_types",
+        "package_managers",
+        "files_scanned",
+        "quality_applicability",
+    }
     assert d["languages"] == list(result.languages)
