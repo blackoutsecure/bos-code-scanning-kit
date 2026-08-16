@@ -511,7 +511,9 @@ runs:
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}"
         python3 - <<'PY'
-        import json, os, pathlib
+        import json, os, pathlib, sys
+
+        sys.path.insert(0, str(pathlib.Path(os.environ["GITHUB_ACTION_PATH"]) / "src"))
 
         from ai import detect_provider, summarize as summarize_with_ai
         from config import resolve
