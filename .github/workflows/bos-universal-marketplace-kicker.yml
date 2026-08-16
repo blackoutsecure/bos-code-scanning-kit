@@ -3,7 +3,7 @@
 # Blackout Secure universal Marketplace kicker (hub-managed).
 # Customize via `.github/bos-universal-config.json`, not this file.
 # Schema docs: https://github.com/blackoutsecure/bos-automation-hub
-name: Blackout Secure Universal Marketplace
+name: '[KICKER] Blackout Secure Universal Marketplace'
 run-name: >-
   Blackout Secure / marketplace / ${{
     github.event_name == 'pull_request_target'
@@ -63,7 +63,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: marketplace-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.operation || 'validate' }}
+  group: bos-marketplace-kicker-${{ github.repository }}-${{ github.ref }}-${{ inputs.operation || 'validate' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || inputs.operation != 'release' }}
 
 jobs:
