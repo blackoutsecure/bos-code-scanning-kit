@@ -126,7 +126,7 @@ def _recommended_actions(totals: dict[str, int]) -> list[str]:
 
 def _display_remediation(finding: Finding) -> str:
     if finding.severity == "pass":
-        return "—"
+        return "No action needed."
     return finding.remediation or "—"
 
 
