@@ -496,6 +496,7 @@ def test_summary_markdown_includes_summary_and_remediation_columns():
     assert "**Verdict:** Advisory review recommended" in summary
     assert "**Totals:**" in summary
     assert "## Recommended Actions" in summary
+    assert "| Finding Key | Rule | Assessment | Location | Evidence / Why | Recommended Action | Automation |" in summary
     assert "#### `.github/workflows/ci.yml`" in summary
     assert "**Findings requiring attention**" in summary
     assert "| Rule | Severity | Control | Evidence | Recommended Remediation |" in summary

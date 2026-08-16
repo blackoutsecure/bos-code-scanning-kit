@@ -312,8 +312,8 @@ class AuditResult:
             lines.extend([
                 "## Recommendations",
                 "",
-                "| Finding Key | Rule | Location | Recommendation Status | Open PR |",
-                "| ----------- | ---- | -------- | --------------------- | ------- |",
+                "| Finding Key | Rule | Assessment | Location | Evidence / Why | Recommended Action | Automation |",
+                "| ----------- | ---- | ---------- | -------- | -------------- | ------------------- | ---------- |",
                 "| — | — | — | none | No PR |",
                 "",
             ])
@@ -322,21 +322,18 @@ class AuditResult:
             lines.append("_No findings were emitted by the configured audit controls._")
             return "\n".join(lines) + "\n"
 
-        recommendations = [
-            f.recommendation_dict()
-            for f in self.findings
-            if f.severity != "pass" and f.remediation.strip()
-        ]
+        recommendations = [f for f in self.findings if f.severity != "pass" and f.remediation.strip()]
         lines.extend([
             "## Recommendations",
             "",
-            "| Finding Key | Rule | Location | Recommendation Status | Open PR |",
-            "| ----------- | ---- | -------- | --------------------- | ------- |",
+            "| Finding Key | Rule | Assessment | Location | Evidence / Why | Recommended Action | Automation |",
+            "| ----------- | ---- | ---------- | -------- | -------------- | ------------------- | ---------- |",
         ])
         lines.extend(
-            f"| `{item['finding_key']}` | `{item['rule_id']}` | {_md_escape(item['location'] or '—')} | "
-            f"`{item['patch_status']}` | No PR |"
-            for item in recommendations
+            f"| `{finding.finding_key}` | `{finding.rule_id}` | {_severity_label(finding.severity)} | "
+            f"{_md_escape(finding.location or '—')} | {_md_escape(finding.message)} | "
+            f"{_md_escape(finding.remediation)} | `not available` |"
+            for finding in recommendations
         )
         if not recommendations:
             lines.append("| — | — | — | none | No PR |")
