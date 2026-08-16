@@ -188,6 +188,21 @@ def test_resolve_can_disable_global_config(tmp_path: Path):
         assert str(global_path) not in cfg.source_paths
 
 
+def test_resolve_can_disable_marketplace_config(tmp_path: Path):
+        repo_path = tmp_path / ".bos-scan.yml"
+        repo_path.write_text("owner: repo-owner\n")
+
+        cfg = cfg_mod.resolve(tmp_path, use_marketplace_config=False)
+
+        assert not any(
+            source.endswith(cfg_mod.MARKETPLACE_CONFIG_FILE) for source in cfg.source_paths
+        )
+        assert cfg.owner == "repo-owner"
+        # Anything the marketplace baseline would have set now falls back
+        # to the plain dataclass defaults instead.
+        assert cfg.scan.fail_on == "high"
+
+
 def test_discover_prefers_github_universal_config(tmp_path: Path):
         legacy = tmp_path / ".bos-scan.yml"
         legacy.write_text("owner: legacy\n")

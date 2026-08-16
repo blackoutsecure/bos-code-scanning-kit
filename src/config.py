@@ -181,13 +181,17 @@ def resolve(
     config_path: str | Path | None = None,
     global_config_path: str | Path = DEFAULT_GLOBAL_CONFIG_PATH,
     use_global_config: bool | None = None,
+    use_marketplace_config: bool = True,
     repo_name: str = "",
 ) -> Config:
     """Resolve marketplace, optional global, and repository config tiers.
 
     ``use_global_config`` is tri-state: ``None`` auto-loads the conventional
     path when present, ``True`` requires it, and ``False`` disables it.
-    Explicit relative paths are resolved from ``root``.
+    ``use_marketplace_config`` defaults to ``True`` (the bundled baseline is
+    always applied first); set ``False`` to start from an empty baseline and
+    rely solely on the global/repository tiers. Explicit relative paths are
+    resolved from ``root``.
 
     If ``repo_name`` is provided and project_name is unset in config,
     project_name defaults to ``repo_name``.
@@ -209,17 +213,36 @@ def resolve(
         elif use_global_config is True:
             raise ConfigError(f"global config not found: {candidate}")
 
-    return load(repo_path, global_path=global_path, repo_name=repo_name)
+    return load(
+        repo_path,
+        global_path=global_path,
+        use_marketplace_config=use_marketplace_config,
+        repo_name=repo_name,
+    )
 
 
-def load(path: Path | None, *, global_path: Path | None = None, repo_name: str = "") -> Config:
+def load(
+    path: Path | None,
+    *,
+    global_path: Path | None = None,
+    use_marketplace_config: bool = True,
+    repo_name: str = "",
+) -> Config:
     """Load and merge bundled marketplace, global, and repository config.
+
+    ``use_marketplace_config=False`` skips the bundled baseline entirely so
+    only the global/repository tiers (or hard-coded dataclass defaults, if
+    neither is present) apply.
 
     If ``repo_name`` is provided and project_name is unset in config,
     project_name defaults to ``repo_name``.
     """
-    merged = _load_marketplace_section()
-    source_paths = [f"bundled:{MARKETPLACE_CONFIG_FILE}"]
+    if use_marketplace_config:
+        merged = _load_marketplace_section()
+        source_paths = [f"bundled:{MARKETPLACE_CONFIG_FILE}"]
+    else:
+        merged = {}
+        source_paths = []
 
     if global_path is not None:
         merged = _deep_merge(merged, _load_section(global_path))
