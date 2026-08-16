@@ -72,11 +72,11 @@ def _md_escape(text: str) -> str:
 
 def _severity_label(severity: str) -> str:
     labels = {
-        "pass": "Pass",
-        "warn": "Warning",
-        "fail": "High",
-        "error": "Critical",
-        "skip": "Not Assessed",
+        "pass": "✅ Pass",
+        "warn": "⚠️ Warning",
+        "fail": "🔴 High",
+        "error": "🔥 Critical",
+        "skip": "⚪ Not Assessed",
     }
     return labels.get(severity, severity.title())
 

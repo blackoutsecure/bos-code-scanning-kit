@@ -814,6 +814,23 @@ runs:
             for record in records:
                 fh.write("| " + " | ".join(md_escape(value) for value in row_fn(record)) + " |\n")
 
+          severity_badge = {
+            "pass": "✅",
+            "warn": "⚠️",
+            "fail": "🔴",
+            "error": "🔥",
+            "skip": "⚪",
+            "warning": "⚠️",
+            "note": "ℹ️",
+          }
+          result_badge = {
+            "success": "✅",
+            "warn": "⚠️",
+            "failure": "🔴",
+            "incomplete": "⚪",
+            "skipped": "➖",
+          }
+
         # ─── Console echo ────────────────────────────────────────────
         # Mirror the per-stage table + outcome to the runner log too.
         # GitHub Actions renders ANSI sequences verbatim, so colour the
@@ -871,7 +888,8 @@ runs:
                 fh.write("| Stage | Result | Findings |\n")
                 fh.write("|---|---|---|\n")
                 for label, result, detail in rows:
-                    fh.write(f"| {label} | {result} | {detail} |\n")
+                  badge = result_badge.get(result, "ℹ️")
+                  fh.write(f"| {label} | {badge} **{result}** | {detail} |\n")
                 fh.write(f"\n**Outcome:** `{outcome}` — {verdict}\n")
                 if ai_summary:
                   fh.write("\n### AI triage summary\n\n")
@@ -890,7 +908,7 @@ runs:
                     fh,
                     ["Source", "Rule", "Severity", "Location", "Evidence", "Recommended remediation"],
                     attention_rows,
-                    lambda r: [r["source"], f"`{r['rule_id']}`", r["severity"], r["location"], r["message"], r["recommendation"]],
+                    lambda r: [r["source"], f"`{r['rule_id']}`", f"{severity_badge.get(r['severity'], 'ℹ️')} **{r['severity']}**", r["location"], r["message"], r["recommendation"]],
                     "No failing, warning, or scanner annotation rows were found.",
                 )
 
@@ -899,7 +917,7 @@ runs:
                     fh,
                     ["Tool", "Rule", "Severity", "Location", "Annotation", "Recommended remediation"],
                     scanner_annotations,
-                    lambda r: [r["source"], f"`{r['rule_id']}`", r["severity"], r["location"], r["message"], r["recommendation"]],
+                    lambda r: [r["source"], f"`{r['rule_id']}`", f"{severity_badge.get(r['severity'], 'ℹ️')} **{r['severity']}**", r["location"], r["message"], r["recommendation"]],
                     "No scanner annotations were emitted by actionlint, gitleaks, or shellcheck.",
                 )
                 fh.write("\n</details>\n")

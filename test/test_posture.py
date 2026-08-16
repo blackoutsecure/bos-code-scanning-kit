@@ -495,7 +495,7 @@ def test_summary_markdown_includes_summary_and_remediation_columns():
     assert "## Recommended Actions" in summary
     assert "#### Findings Requiring Attention" in summary
     assert "| Rule | Severity | Location | Control | Evidence | Recommended Remediation |" in summary
-    assert "| `PS010` | Warning | .github/workflows/ci.yml | Workflow permissions are declared |" in summary
+    assert "| `PS010` | ⚠️ Warning | .github/workflows/ci.yml | Workflow permissions are declared |" in summary
     assert "Set a top-level permissions block" in summary
 
 
@@ -514,7 +514,7 @@ def test_summary_markdown_omits_remediation_for_passed_findings():
     summary = result.summary_markdown()
     assert "#### Passed Controls" in summary
     assert "| Rule | Severity | Location | Control | Evidence |" in summary
-    assert "| `PS011` | Pass | .github/workflows/ci.yml | Workflow write access is restricted |" in summary
+    assert "| `PS011` | ✅ Pass | .github/workflows/ci.yml | Workflow write access is restricted |" in summary
     assert "Tighten workflow permissions." not in summary
 
 
