@@ -124,6 +124,30 @@ def test_no_workflow_dir_is_silent(tmp_path: Path):
     assert findings == []
 
 
+def test_finding_key_is_stable_and_location_sensitive():
+    first = posture_mod.Finding("PS010", "fail", "missing", ".github/workflows/ci.yml")
+    same = posture_mod.Finding("PS010", "warn", "changed text", ".github/workflows/ci.yml")
+    other = posture_mod.Finding("PS010", "fail", "missing", ".github/workflows/release.yml")
+
+    assert first.finding_key == same.finding_key
+    assert first.finding_key != other.finding_key
+
+
+def test_recommendation_dict_has_contract_and_no_unvalidated_patch():
+    finding = posture_mod.Finding(
+        "PS010", "fail", "missing permissions", ".github/workflows/ci.yml",
+    )
+
+    recommendation = finding.recommendation_dict()
+
+    assert set(recommendation) == {
+        "finding_key", "rule_id", "title", "location", "recommendation",
+        "confidence", "source", "patch_status",
+    }
+    assert recommendation["finding_key"] == finding.finding_key
+    assert recommendation["patch_status"] == "unavailable"
+
+
 # ---------------------------------------------------------------------------
 # PS012 — pinned-actions audit
 # ---------------------------------------------------------------------------

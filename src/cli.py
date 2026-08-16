@@ -110,6 +110,10 @@ def _build_parser() -> argparse.ArgumentParser:
              "indeterminate probes — these are dropped from SARIF.",
     )
     p_pos.add_argument(
+        "--recommendations-json", default="",
+        help="If set, write structured remediation recommendations for non-pass findings.",
+    )
+    p_pos.add_argument(
         "--fail-on", choices=("never", "fail"),
         default="fail",
         help="`fail` (default) exits non-zero on any FAIL finding; `never` always exits 0.",
@@ -267,6 +271,21 @@ def cmd_posture(args: argparse.Namespace) -> int:
         sys.stderr.write(
             f"wrote posture skips JSON: {args.skips_json} "
             f"({len(skip_payload['skips'])} skip(s))\n"
+        )
+
+    if args.recommendations_json:
+        recommendations = [
+            f.recommendation_dict()
+            for f in result.findings
+            if f.severity != "pass" and f.remediation.strip()
+        ]
+        Path(args.recommendations_json).write_text(
+            json.dumps(recommendations, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        sys.stderr.write(
+            f"wrote posture recommendations JSON: {args.recommendations_json} "
+            f"({len(recommendations)} recommendation(s))\n"
         )
 
     _write_step_summary(result)

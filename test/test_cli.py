@@ -209,6 +209,30 @@ def test_posture_writes_skips_json_sidecar(monkeypatch, tmp_path: Path):
     assert skip_rules == ["PS013"]
 
 
+def test_posture_writes_structured_recommendations(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    recommendations_path = tmp_path / "recommendations.json"
+    out = io.StringIO()
+    err = io.StringIO()
+    with redirect_stderr(err), redirect_stdout(out):
+        rc = cli_mod.main([
+            "posture",
+            "--owner", "o", "--repo", "r",
+            "--root", str(tmp_path),
+            "--recommendations-json", str(recommendations_path),
+            "--fail-on", "never",
+        ])
+
+    assert rc == 0
+    payload = json.loads(recommendations_path.read_text())
+    assert payload
+    assert all(item["patch_status"] == "unavailable" for item in payload)
+    assert all(set(item) == {
+        "finding_key", "rule_id", "title", "location", "recommendation",
+        "confidence", "source", "patch_status",
+    } for item in payload)
+
+
 def test_posture_http_timeout_default_is_20(monkeypatch, tmp_path: Path):
     """`--http-timeout` defaults to 20 and flows into `posture.audit`."""
     captured: dict[str, object] = {}

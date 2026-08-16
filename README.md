@@ -212,8 +212,34 @@ the `commit` field of the GitHub Release JSON.
 | --- | --- |
 | `sarif_path` | Path to the merged SARIF file produced by the run. |
 | `posture_failures` | Number of FAIL findings from the posture audit. |
+| `recommendations_path` | Path to structured posture remediation recommendations. |
 | `outcome` | Severity-tier verdict for the run: `success` (no findings at any level), `warn` (only warning/note-level findings — nothing the enforcement policy would block on), or `failure` (at least one error-level finding from the posture audit or any scanner). Reflects severity only — it does NOT change based on `fail_on`, so callers can gate pipelines on the verdict independently of whether the kit step itself exited non-zero. |
 <!-- END action-outputs -->
+
+### Structured recommendations
+
+When posture is enabled, the action writes `bos-scan-recommendations.json` and
+exposes its path as the `recommendations_path` output. The file contains one
+entry for each non-pass finding with remediation text:
+
+```json
+{
+  "finding_key": "ps010-4f1c...",
+  "rule_id": "PS010",
+  "title": "Workflow permissions are declared",
+  "location": ".github/workflows/ci.yml",
+  "recommendation": "Add or tighten the workflow permission block.",
+  "confidence": "deterministic",
+  "source": "Blackout Secure Recommended Remediation",
+  "patch_status": "unavailable"
+}
+```
+
+`finding_key` is stable for a rule and location, so consumers can deduplicate
+recommendations across runs. The kit does not invent or apply patches;
+`patch_status` remains `unavailable` until a separately validated patch is
+provided. Consumers should default to notify-only behavior and must not create
+a PR from recommendation prose alone.
 
 ## 🔒 SCANNING_PAT — advanced posture credentials walkthrough
 
