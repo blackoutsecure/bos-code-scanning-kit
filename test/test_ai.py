@@ -18,6 +18,23 @@ def test_auto_uses_github_token_as_fallback():
     assert provider.name == "github-models"
 
 
+def test_auto_uses_gh_token_as_fallback():
+    provider = detect_provider(environ={"GH_TOKEN": "token"})
+    assert provider is not None
+    assert provider.name == "github-models"
+
+
+def test_rejects_non_https_endpoints():
+    assert detect_provider(
+        "openai",
+        environ={"OPENAI_API_KEY": "key", "OPENAI_API_ENDPOINT": "http://example.test"},
+    ) is None
+    assert detect_provider(
+        "github-models",
+        environ={"GITHUB_TOKEN": "token", "GITHUB_MODELS_ENDPOINT": "http://example.test"},
+    ) is None
+
+
 def test_explicit_disable_skips_detection():
     assert detect_provider("none", environ={"GITHUB_TOKEN": "token"}) is None
 

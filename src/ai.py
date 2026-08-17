@@ -13,6 +13,12 @@ from typing import Any
 GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference/chat/completions"
 
 
+def _https_endpoint(value: str | None) -> str | None:
+    """Accept only HTTPS AI endpoints so bearer tokens stay encrypted in transit."""
+    endpoint = (value or "").strip()
+    return endpoint if endpoint.startswith("https://") else None
+
+
 @dataclass(frozen=True)
 class Provider:
     name: str
@@ -38,11 +44,14 @@ def detect_provider(
         return None
 
     if name in {"auto", "github", "github-models", "copilot"}:
-        token = env.get("GITHUB_MODELS_TOKEN") or env.get("GITHUB_TOKEN")
+        token = env.get("GITHUB_MODELS_TOKEN") or env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")
         if token:
+            endpoint = _https_endpoint(env.get("GITHUB_MODELS_ENDPOINT", GITHUB_MODELS_ENDPOINT))
+            if not endpoint:
+                return None
             return Provider(
                 name="github-models",
-                endpoint=env.get("GITHUB_MODELS_ENDPOINT", GITHUB_MODELS_ENDPOINT),
+                endpoint=endpoint,
                 model=(
                     env.get("GITHUB_MODELS_MODEL_CODE_SCANNING")
                     or env.get("GITHUB_MODELS_MODEL")
@@ -56,7 +65,10 @@ def detect_provider(
     if name not in {"auto", "github", "github-models", "copilot"}:
         token_name = f"{name.upper().replace('-', '_')}_API_KEY"
         token = env.get(token_name) or env.get("AI_API_KEY")
-        endpoint = env.get(f"{name.upper().replace('-', '_')}_API_ENDPOINT") or env.get("AI_API_ENDPOINT")
+        endpoint = _https_endpoint(
+            env.get(f"{name.upper().replace('-', '_')}_API_ENDPOINT")
+            or env.get("AI_API_ENDPOINT")
+        )
         if token and endpoint:
             return Provider(
                 name=name,
