@@ -26,6 +26,7 @@ env/
 /tmp-*
 .bos-scan-cache/
 .hub-automation/
+run_logs.txt
 
 
 # >>> managed-file-sync:common >>>
