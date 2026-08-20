@@ -7,6 +7,7 @@
       "README.md",
       "LICENSE",
       "NOTICE",
+      "pyproject.toml",
       "src"
     ],
     "blocked_paths": [
@@ -16,7 +17,6 @@
       ".gitignore",
       ".markdownlint.json",
       ".markdownlint.yaml",
-      "pyproject.toml",
       "test/"
     ],
     "required_paths": [
@@ -25,6 +25,7 @@
       "README.md",
       "LICENSE",
       "NOTICE",
+      "pyproject.toml",
       "src"
     ],
     "include_dependabot_config": true,
@@ -32,9 +33,10 @@
     "repo_metadata": {
       "enable": true,
       "homepage": "https://github.com/marketplace/actions/blackout-secure-code-scanning-kit",
+      "ai_enabled": true,
       "ai_model": "auto",
       "description_mode": "auto",
-      "description_fallback": "",
+      "description_fallback": "A composite GitHub Action that scans code, audits repository security posture, and uploads unified SARIF findings to GitHub Advanced Security",
       "use_existing_readme": true,
       "generate_readme": false,
       "generate_topics": true,
