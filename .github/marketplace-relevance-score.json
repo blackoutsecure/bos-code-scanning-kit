@@ -2,14 +2,6 @@
   "history": [
     {
       "at": "",
-      "diff_score": 1,
-      "published": true,
-      "running_total": 100,
-      "sha": "HEAD",
-      "source": "local"
-    },
-    {
-      "at": "",
       "diff_score": 2,
       "published": true,
       "running_total": 100,
@@ -147,6 +139,14 @@
     {
       "at": "",
       "diff_score": 2,
+      "published": true,
+      "running_total": 100,
+      "sha": "HEAD",
+      "source": "local"
+    },
+    {
+      "at": "",
+      "diff_score": 1,
       "published": true,
       "running_total": 100,
       "sha": "HEAD",
