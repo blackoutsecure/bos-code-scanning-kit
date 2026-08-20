@@ -377,7 +377,7 @@ jobs:
     permissions:
       contents: read
       models: read
-    uses: blackoutsecure/bos-automation-hub/.github/workflows/repo-metadata-sync.yml@main
+    uses: blackoutsecure/bos-automation-hub/.github/workflows/repo-metadata-sync.yml@dev
     with:
       checkout_ref: ${{ needs.release.result == 'success' && needs.release.outputs.tag_name || (fromJson(needs.parse_config.outputs.cfg || '{}').marketplace.target_branch || 'main') }}
       description: ${{ fromJson(needs.parse_config.outputs.cfg || '{}').marketplace.repo_metadata.description || '' }}
