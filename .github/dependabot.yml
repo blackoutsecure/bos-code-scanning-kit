@@ -15,8 +15,6 @@
 version: 2
 updates:
 
-
-
 # >>> managed-file-sync:dependabot_actions >>>
   - package-ecosystem: github-actions
     directory: "/"

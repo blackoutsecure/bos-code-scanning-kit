@@ -210,13 +210,13 @@ runs:
       shell: bash
       env:
         GH_OWNER: ${{ inputs.owner || github.repository_owner }}
-        GH_REPO:  ${{ inputs.repo  || github.event.repository.name }}
+        GH_REPO: ${{ inputs.repo || github.event.repository.name }}
         GH_USE_GLOBAL_CFG: ${{ inputs.use_global_config }}
         GH_GLOBAL_CFG: ${{ inputs.global_config_path }}
         GH_USE_MARKETPLACE_CFG: ${{ inputs.use_marketplace_config }}
-        GH_CFG:   ${{ inputs.config }}
+        GH_CFG: ${{ inputs.config }}
         GH_TOKEN: ${{ inputs.github_token || github.token }}
-        FAIL_ON:  ${{ inputs.fail_on }}
+        FAIL_ON: ${{ inputs.fail_on }}
         HTTP_TIMEOUT: ${{ inputs.http_timeout }}
       run: |
         set -euo pipefail
@@ -493,7 +493,7 @@ runs:
       uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
       with:
         sarif_file: ${{ steps.merge.outputs.sarif_path }}
-        category:   ${{ inputs.category }}
+        category: ${{ inputs.category }}
 
     # ----- 6. Build job summary + compute outcome ----------------------
     # Severity-aware verdict for the run, surfaced both as a
@@ -511,20 +511,20 @@ runs:
       if: always()
       shell: bash
       env:
-        ENABLE_POSTURE:  ${{ inputs.enable_posture }}
+        ENABLE_POSTURE: ${{ inputs.enable_posture }}
         ENABLE_SCANNERS: ${{ inputs.enable_scanners }}
-        ENABLE_UPLOAD:   ${{ inputs.enable_upload }}
-        CATEGORY:        ${{ inputs.category }}
-        FAIL_ON:         ${{ inputs.fail_on }}
+        ENABLE_UPLOAD: ${{ inputs.enable_upload }}
+        CATEGORY: ${{ inputs.category }}
+        FAIL_ON: ${{ inputs.fail_on }}
         TOKEN_INPUT_SUPPLIED: ${{ inputs.github_token != '' && 'true' || 'false' }}
-        SARIF_PATH:      ${{ steps.merge.outputs.sarif_path }}
+        SARIF_PATH: ${{ steps.merge.outputs.sarif_path }}
         POSTURE_EXIT_CODE: ${{ steps.posture.outputs.exit_code }}
-        GITHUB_TOKEN:    ${{ inputs.github_token || github.token }}
-        CONFIG_PATH:     ${{ inputs.config }}
+        GITHUB_TOKEN: ${{ inputs.github_token || github.token }}
+        CONFIG_PATH: ${{ inputs.config }}
         GLOBAL_CONFIG_PATH: ${{ inputs.global_config_path }}
-        USE_GLOBAL_CONFIG:  ${{ inputs.use_global_config }}
+        USE_GLOBAL_CONFIG: ${{ inputs.use_global_config }}
         USE_MARKETPLACE_CONFIG: ${{ inputs.use_marketplace_config }}
-        HTTP_TIMEOUT:     ${{ inputs.http_timeout }}
+        HTTP_TIMEOUT: ${{ inputs.http_timeout }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}"
@@ -750,9 +750,13 @@ runs:
         upload_enabled = os.environ.get("ENABLE_UPLOAD") == "true"
         sarif_path = os.environ.get("SARIF_PATH") or "not produced"
         config_rows = [
-            ("Posture audit", enabled(os.environ.get("ENABLE_POSTURE")), "Checks GitHub security settings, workflows, branch protection, and CODEOWNERS."),
-            ("Bundled scanners", enabled(os.environ.get("ENABLE_SCANNERS")), "Runs actionlint, gitleaks, and shellcheck when matching files are present."),
-            ("SARIF upload", enabled(os.environ.get("ENABLE_UPLOAD")), f"{'Uploads' if upload_enabled else 'Does not upload'} merged findings to Code scanning category `{os.environ.get('CATEGORY') or 'bos-code-scanning-kit'}`; path: `{sarif_path}`."),
+          ("Posture audit", enabled(os.environ.get("ENABLE_POSTURE")),
+           "Checks GitHub security settings, workflows, branch protection, and CODEOWNERS."),
+          ("Bundled scanners", enabled(os.environ.get("ENABLE_SCANNERS")),
+           "Runs actionlint, gitleaks, and shellcheck when matching files are present."),
+          ("SARIF upload", enabled(os.environ.get("ENABLE_UPLOAD")),
+           f"{'Uploads' if upload_enabled else 'Does not upload'} merged findings to Code scanning category "
+           f"`{os.environ.get('CATEGORY') or 'bos-code-scanning-kit'}`; path: `{sarif_path}`."),
             ("Failure policy", f"`{fail_on}`", "`fail` blocks on failure findings; `never` keeps the run advisory."),
             ("Token mode", token_mode, token_capability),
             ("Observed posture coverage", observed_coverage, "Use `SCANNING_PAT` if admin-gated checks are skipped."),
@@ -1050,5 +1054,6 @@ runs:
       env:
         CATEGORY: ${{ inputs.category }}
       run: |
-        echo "::error::bos-code-scanning-kit outcome=failure — at least one error-level finding. See the job summary for the per-stage breakdown, and the repo Security tab (category '${CATEGORY}') for details. Override with 'fail_on: never' (kit advisory mode) or 'security_scan_blocks_release: false' (launchpad)."
+        echo "::error::bos-code-scanning-kit outcome=failure — at least one error-level finding. See the job summary and Security tab (category '${CATEGORY}') for details."
+        echo "::error::Override with 'fail_on: never' (kit advisory mode) or 'security_scan_blocks_release: false' (launchpad)."
         exit 1
