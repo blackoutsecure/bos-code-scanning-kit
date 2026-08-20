@@ -38,7 +38,10 @@ name: Self-scan · dogfood action against own repo
         default: 'never'
         options: ['never', 'fail']
       advanced_scanning:
-        description: 'Force advanced posture probes (PS001/PS002/PS003) on or off. Leave unchecked to use the default: auto-enabled on every event when secret `SCANNING_PAT` is present, otherwise off. Check to force-enable (errors out with `require_pat` if secret is missing).'
+        description: >-
+          Force advanced posture probes (PS001/PS002/PS003) on or off. Leave
+          unchecked to auto-enable when `SCANNING_PAT` is present; otherwise
+          they stay off. Force-enable fails with `require_pat` when absent.
         required: false
         type: boolean
         default: false
@@ -87,12 +90,12 @@ jobs:
           # "empty (not required)" line in the preflight log when the org
           # actually has DEFAULT_RUNNER set. See the action's own docs
           # ("Convention: callers should forward all three runner vars").
-          default_runner:         ${{ vars.DEFAULT_RUNNER }}
-          runner_x64:             ${{ vars.RUNNER_X64 }}
-          runner_arm64:           ${{ vars.RUNNER_ARM64 }}
+          default_runner: ${{ vars.DEFAULT_RUNNER }}
+          runner_x64: ${{ vars.RUNNER_X64 }}
+          runner_arm64: ${{ vars.RUNNER_ARM64 }}
           require_default_runner: 'false'
-          require_runner_x64:     'true'
-          require_runner_arm64:   'true'
+          require_runner_x64: 'true'
+          require_runner_arm64: 'true'
 
   self-scan:
     name: Self-scan (${{ matrix.arch }})
@@ -189,7 +192,7 @@ jobs:
       - name: Show outputs
         if: always()
         env:
-          SARIF_PATH:       ${{ steps.scan.outputs.sarif_path }}
+          SARIF_PATH: ${{ steps.scan.outputs.sarif_path }}
           POSTURE_FAILURES: ${{ steps.scan.outputs.posture_failures }}
         run: |
           set -euo pipefail
