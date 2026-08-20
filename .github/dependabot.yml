@@ -15,9 +15,7 @@
 version: 2
 updates:
 
-
-
-# >>> managed-file-sync:dependabot_actions >>>
+  # >>> managed-file-sync:dependabot_actions >>>
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -26,9 +24,9 @@ updates:
       prefix: "chore(deps)"
     labels:
       - dependencies
-# <<< managed-file-sync:dependabot_actions <<<
+  # <<< managed-file-sync:dependabot_actions <<<
 
-# >>> managed-file-sync:dependabot_pip >>>
+  # >>> managed-file-sync:dependabot_pip >>>
   - package-ecosystem: pip
     directory: /
     target-branch: dev
@@ -44,4 +42,4 @@ updates:
     labels:
       - dependencies
       - python
-# <<< managed-file-sync:dependabot_pip <<<
+  # <<< managed-file-sync:dependabot_pip <<<

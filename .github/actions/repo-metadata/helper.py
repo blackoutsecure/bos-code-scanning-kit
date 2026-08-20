@@ -164,7 +164,9 @@ def extract_readme_summary(text: str, max_len: int = 1500) -> str:
             continue
         if all_lines_are(para, is_badge_or_image):
             continue
-        if all_lines_are(para, lambda l: is_list_or_table(l) or is_html_block(l)):
+        if all_lines_are(
+            para, lambda line: is_list_or_table(line) or is_html_block(line)
+        ):
             continue
         # Strip lingering inline badge/image lines from the head of
         # the paragraph but keep prose lines.
