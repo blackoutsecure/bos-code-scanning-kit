@@ -1,57 +1,57 @@
 {
-  "marketplace": {
-    "enabled": true,
-    "target_branch": "main",
-    "allowlist_paths": [
-      "action.yml",
-      "README.md",
-      "LICENSE",
-      "NOTICE",
-      "pyproject.toml",
-      "src"
-    ],
-    "blocked_paths": [
-      ".github/workflows/",
-      ".editorconfig",
-      ".gitattributes",
-      ".gitignore",
-      ".markdownlint.json",
-      ".markdownlint.yaml",
-      "test/"
-    ],
-    "required_paths": [
-      ".github/dependabot.yml",
-      "action.yml",
-      "README.md",
-      "LICENSE",
-      "NOTICE",
-      "pyproject.toml",
-      "src"
-    ],
-    "include_dependabot_config": true,
-    "include_github_metadata": false,
-    "repo_metadata": {
-      "enable": true,
-      "homepage": "https://github.com/marketplace/actions/blackout-secure-code-scanning-kit",
-      "ai_enabled": true,
-      "ai_model": "auto",
-      "description_mode": "auto",
-      "description_fallback": "A composite GitHub Action that scans code, audits repository security posture, and uploads unified SARIF findings to GitHub Advanced Security",
-      "use_existing_readme": true,
-      "generate_readme": false,
-      "generate_topics": true,
-      "topics_fallback": "github-actions code-scanning security sarif posture-audit gitleaks actionlint shellcheck composite-action devsecops github-advanced-security",
-      "categories": {
-        "primary": "auto",
-        "secondary": "auto"
-      },
-      "marketplace_slug": "blackout-secure-code-scanning-kit"
+    "marketplace": {
+        "enabled": true,
+        "target_branch": "main",
+        "allowlist_paths": [
+            "action.yml",
+            "README.md",
+            "LICENSE",
+            "NOTICE",
+            "pyproject.toml",
+            "src"
+        ],
+        "blocked_paths": [
+            ".github/workflows/",
+            ".editorconfig",
+            ".gitattributes",
+            ".gitignore",
+            ".markdownlint.json",
+            ".markdownlint.yaml",
+            "test/"
+        ],
+        "required_paths": [
+            ".github/dependabot.yml",
+            "action.yml",
+            "README.md",
+            "LICENSE",
+            "NOTICE",
+            "pyproject.toml",
+            "src"
+        ],
+        "include_dependabot_config": true,
+        "include_github_metadata": false,
+        "repo_metadata": {
+            "enable": true,
+            "homepage": "https://github.com/marketplace/actions/blackout-secure-code-scanning-kit",
+            "ai_enabled": true,
+            "ai_model": "auto",
+            "description_mode": "auto",
+            "description_fallback": "A composite GitHub Action that scans code, audits repository security posture, and uploads unified SARIF findings to GitHub Advanced Security",
+            "use_existing_readme": true,
+            "generate_readme": false,
+            "generate_topics": true,
+            "topics_fallback": "github-actions code-scanning security sarif posture-audit gitleaks actionlint shellcheck composite-action devsecops github-advanced-security",
+            "categories": {
+                "primary": "auto",
+                "secondary": "auto"
+            },
+            "marketplace_slug": "blackout-secure-code-scanning-kit"
+        }
+    },
+    "managed_file_sync": {
+        "services": [
+            "bos_universal_action_test_kicker",
+            "bos_universal_marketplace_kicker"
+        ]
     }
-  },
-  "managed_file_sync": {
-    "services": [
-      "bos_universal_action_test_kicker",
-      "bos_universal_marketplace_kicker"
-    ]
-  }
 }
