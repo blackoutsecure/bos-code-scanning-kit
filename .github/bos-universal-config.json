@@ -54,5 +54,16 @@
             "bos_universal_marketplace_kicker",
             "python_ecosystem"
         ]
+    },
+    "action_test": {
+        "python_versions": [
+            "3.10",
+            "3.11",
+            "3.12"
+        ],
+        "python_packages": [
+            "-e",
+            ".[dev]"
+        ]
     }
 }
