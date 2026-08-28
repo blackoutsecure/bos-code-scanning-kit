@@ -48,13 +48,6 @@
             "marketplace_slug": "blackout-secure-code-scanning-kit"
         }
     },
-    "managed_file_sync": {
-        "services": [
-            "bos_universal_action_test_kicker",
-            "bos_universal_marketplace_kicker",
-            "python_ecosystem"
-        ]
-    },
     "action_test": {
         "python_versions": [
             "3.10",
