@@ -89,15 +89,22 @@ def summarize(
     prompt = {
         "role": "user",
         "content": (
-            "Summarize these code-scanning findings in at most three concise bullets. "
+            "Summarize these repository findings in at most three concise bullets. "
             "Prioritize severity and concrete next steps. Do not invent facts.\n\n"
+            "`PS###` are security-posture findings. `LD###` and `LF###` are "
+            "licence-compliance findings: describe those as compliance or "
+            "attribution issues, never as vulnerabilities, and do not offer "
+            "legal conclusions.\n\n"
             + json.dumps(findings, ensure_ascii=True)
         ),
     }
     payload = {
         "model": provider.model,
         "messages": [
-            {"role": "system", "content": "You are a security triage assistant."},
+            {"role": "system", "content":
+                "You are a repository triage assistant covering security posture "
+                "and licence compliance. You are not a lawyer and must not give "
+                "legal advice."},
             prompt,
         ],
         "temperature": 0,

@@ -202,11 +202,12 @@ def test_posture_writes_skips_json_sidecar(monkeypatch, tmp_path: Path):
     # No token + no live API → no API-driven probe emits a skip; PS000
     # is `error` (excluded). PS013 (Microsoft Security DevOps detection)
     # always emits exactly one row at the configured severity — default
-    # `skip` when the workflow has no MSDO call site — so the sidecar
-    # for this bare-repo + no-token scenario should contain exactly
-    # that one skip and nothing else.
+    # `skip` when the workflow has no MSDO call site. The LF### licence
+    # rules also skip here: a bare repo has no LICENSE, so there is no
+    # project licence to check in-tree headers against.
     skip_rules = [s["rule_id"] for s in payload["skips"]]
-    assert skip_rules == ["PS013"]
+    assert "PS013" in skip_rules
+    assert set(skip_rules) <= {"PS013", "LF001", "LF002", "LF003", "LF004"}
 
 
 def test_posture_writes_structured_recommendations(monkeypatch, tmp_path: Path):

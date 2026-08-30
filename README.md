@@ -23,6 +23,16 @@ required reviews, and CODEOWNERS for every branch you care about.
   signed commits, status checks, conversation resolution, force-push
   restrictions, and CODEOWNERS ownership coverage. Per-rule severity
   is configurable.
+- **Dependency licence compliance** — `LD001`–`LD005` read the GitHub
+  dependency-graph SBOM and flag dependencies that declare no licence,
+  carry a non-OSI source-available licence, violate your `allow` /
+  `deny` policy, or are more reciprocal than the licence this project
+  ships under.
+- **Working-tree licence and copyright scan** — `LF001`–`LF004` read
+  `SPDX-License-Identifier` headers and copyright notices straight off
+  disk, catching vendored third-party code, foreign licences, mixed
+  attribution, and incompatible combinations. Classified offline against
+  a vendored snapshot of the OSI approved-licence list.
 - **Bundled scanners (v1.0)** — [actionlint] for workflow YAML,
   [gitleaks] for secrets across the working tree, and [shellcheck]
   for `*.sh` / `*.bash`. Each runs conditionally based on what
@@ -49,7 +59,7 @@ required reviews, and CODEOWNERS for every branch you care about.
   single `pip install`.
 
 [actionlint]: https://github.com/rhysd/actionlint
-[gitleaks]:   https://github.com/gitleaks/gitleaks
+[gitleaks]: https://github.com/gitleaks/gitleaks
 [shellcheck]: https://www.shellcheck.net
 
 ## 📖 Table of Contents
@@ -62,8 +72,9 @@ required reviews, and CODEOWNERS for every branch you care about.
     - [Version pinning](#version-pinning)
   - [⚙️ Action inputs](#️-action-inputs)
   - [📤 Action outputs](#-action-outputs)
-  - [🔒 SCANNING\_PAT — advanced posture credentials walkthrough](#-scanning_pat--advanced-posture-credentials-walkthrough)
+  - [🔒 SCANNING_PAT — advanced posture credentials walkthrough](#-scanning_pat--advanced-posture-credentials-walkthrough)
   - [Posture rule reference](#posture-rule-reference)
+    - [LD001-LD004 — dependency licences](#ld001-ld004--dependency-licences)
   - [🧪 Supported code scanning](#-supported-code-scanning)
     - [Scanner roster](#scanner-roster)
     - [Tool inventory (v1.0)](#tool-inventory-v10)
@@ -87,6 +98,11 @@ required reviews, and CODEOWNERS for every branch you care about.
   for the full tick / don't-tick checklist (classic and fine-grained).
 - For the **SARIF upload**: `security-events: write` in your workflow
   `permissions:` block.
+- For the **dependency licence rules** (`LD001`-`LD004`): the dependency
+  graph must be enabled (Settings → Code security), and the token needs
+  `contents: read`. The default `${{ secrets.GITHUB_TOKEN }}` is enough
+  on public repositories; the rules degrade to `skip` when the graph is
+  off or unreadable.
 
 ## 🚀 Quick start
 
@@ -99,13 +115,13 @@ on:
   pull_request:
     branches: [main, dev]
   schedule:
-    - cron: '17 4 * * 1'   # weekly Monday 04:17 UTC
+    - cron: "17 4 * * 1" # weekly Monday 04:17 UTC
 
 permissions:
-  contents:        read
-  security-events: write   # upload SARIF
-  actions:         read    # workflow context
-  models:          read    # optional GitHub Models AI triage
+  contents: read
+  security-events: write # upload SARIF
+  actions: read # workflow context
+  models: read # optional GitHub Models AI triage
 
 jobs:
   scan:
@@ -170,11 +186,11 @@ environment; never commit them to config files.
 Pick a `uses:` ref shape based on how strict your supply-chain posture
 needs to be. All three forms are supported equally.
 
-| Form | Example | When to use |
-| ---- | ------- | ----------- |
-| **Floating major (default)** | `blackoutsecure/bos-code-scanning-kit@v1` | Friendly default. Auto-tracks every v1.x.y patch + minor release as we ship bug fixes and new rules. Recommended for most callers. |
-| **Immutable tag** | `blackoutsecure/bos-code-scanning-kit@v1.0.0` | Pin to a specific release. Predictable scan results across runs; requires manual bumps for new fixes. Recommended when failed scans break critical pipelines. |
-| **SHA-pinned** | `blackoutsecure/bos-code-scanning-kit@<40-char-sha> # v1.0.0` | Strictest. Survives even a malicious tag-move on the kit repo (the [tj-actions/changed-files class of supply-chain attack][supply-chain-class]). Recommended for regulated / high-security callers. Use Dependabot's `package-ecosystem: github-actions` to keep the pin current. |
+| Form                         | Example                                                       | When to use                                                                                                                                                                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Floating major (default)** | `blackoutsecure/bos-code-scanning-kit@v1`                     | Friendly default. Auto-tracks every v1.x.y patch + minor release as we ship bug fixes and new rules. Recommended for most callers.                                                                                                                                                |
+| **Immutable tag**            | `blackoutsecure/bos-code-scanning-kit@v1.0.0`                 | Pin to a specific release. Predictable scan results across runs; requires manual bumps for new fixes. Recommended when failed scans break critical pipelines.                                                                                                                     |
+| **SHA-pinned**               | `blackoutsecure/bos-code-scanning-kit@<40-char-sha> # v1.0.0` | Strictest. Survives even a malicious tag-move on the kit repo (the [tj-actions/changed-files class of supply-chain attack][supply-chain-class]). Recommended for regulated / high-security callers. Use Dependabot's `package-ecosystem: github-actions` to keep the pin current. |
 
 [supply-chain-class]: https://www.cisa.gov/news-events/cybersecurity-advisories/aa25-077a
 
@@ -184,22 +200,24 @@ the `commit` field of the GitHub Release JSON.
 ## ⚙️ Action inputs
 
 <!-- BEGIN action-inputs -->
-| Input | Default | Description |
-| --- | --- | --- |
-| `owner` | _(none)_ | GitHub owner of the repo being scanned. Defaults to the workflow context. |
-| `repo` | _(none)_ | GitHub repo name being scanned. Defaults to the workflow context. |
-| `use_global_config` | `auto` | `auto` loads the organization-level global config when present. `true` requires it; `false` disables it. |
-| `global_config_path` | `.github/blackout-secure-code-scanning-kit-global-config.yml` | Organization-level config path. Loaded automatically when present, after marketplace defaults and before the repository config. |
-| `use_marketplace_config` | `true` | `true` (default) applies the bundled marketplace baseline first, then layers global/repository config on top. Set `false` to skip the bundled baseline entirely and rely solely on your global/repository config (falling back to the dataclass defaults for anything unset). |
-| `config` | _(none)_ | Repository config path. Defaults to `.github/bos-universal-config.json`, `.github/bos-universal-config.yml`, then legacy `.bos-scan.yml` discovery. |
-| `github_token` | _(none)_ | GitHub token for the posture audit. Leave blank to use the workflow's built-in GITHUB_TOKEN for baseline checks. For full posture coverage, create a `SCANNING_PAT` secret and pass it here with `github_token: <SCANNING_PAT-or-GITHUB_TOKEN>`. The PAT lets the kit verify admin-gated controls such as secret scanning, Dependabot alerts, and branch protection instead of reporting them as skipped. Walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough |
-| `enable_posture` | `true` | `true` to run the posture audit step. |
-| `enable_scanners` | `true` | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck). |
-| `enable_upload` | `true` | `true` to upload the merged SARIF to GitHub Advanced Security. |
-| `category` | `bos-code-scanning-kit` | Code Scanning category for the SARIF upload. Override this when a repo runs the kit from more than one caller workflow for the same commit (e.g. a PR gate AND a release pipeline) so the two uploads don't collide under the same category and race/overwrite each other. |
-| `fail_on` | `fail` | `fail` (default) — exit non-zero if posture has any FAIL findings or any scanner reports a result. `never` — collect findings but always exit 0 (useful for first-time rollouts). |
-| `http_timeout` | `20` | Per-request HTTP timeout (seconds) for the posture audit's GitHub REST calls. Default `20`. Each probe is independent, so the practical upper bound on a posture run is roughly `http_timeout` * number-of-probes (~10 on a baseline scan). Bump on self-hosted runners with slow egress, or to ride out brief GitHub API latency spikes that otherwise surface as `PS*** error: HTTP 502` rows. Bare integer string; no unit. |
-| `sarif_output` | `bos-scan.sarif` | Path for the merged SARIF artefact. |
+
+| Input                    | Default                                                       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `owner`                  | _(none)_                                                      | GitHub owner of the repo being scanned. Defaults to the workflow context.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `repo`                   | _(none)_                                                      | GitHub repo name being scanned. Defaults to the workflow context.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `use_global_config`      | `auto`                                                        | `auto` loads the organization-level global config when present. `true` requires it; `false` disables it.                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `global_config_path`     | `.github/blackout-secure-code-scanning-kit-global-config.yml` | Organization-level config path. Loaded automatically when present, after marketplace defaults and before the repository config.                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `use_marketplace_config` | `true`                                                        | `true` (default) applies the bundled marketplace baseline first, then layers global/repository config on top. Set `false` to skip the bundled baseline entirely and rely solely on your global/repository config (falling back to the dataclass defaults for anything unset).                                                                                                                                                                                                                                                         |
+| `config`                 | _(none)_                                                      | Repository config path. Defaults to `.github/bos-universal-config.json`, `.github/bos-universal-config.yml`, then legacy `.bos-scan.yml` discovery.                                                                                                                                                                                                                                                                                                                                                                                   |
+| `github_token`           | _(none)_                                                      | GitHub token for the posture audit. Leave blank to use the workflow's built-in GITHUB_TOKEN for baseline checks. For full posture coverage, create a `SCANNING_PAT` secret and pass it here with `github_token: <SCANNING_PAT-or-GITHUB_TOKEN>`. The PAT lets the kit verify admin-gated controls such as secret scanning, Dependabot alerts, and branch protection instead of reporting them as skipped. Walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough |
+| `enable_posture`         | `true`                                                        | `true` to run the posture audit step.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `enable_scanners`        | `true`                                                        | `true` to run the bundled scanners (actionlint / gitleaks / shellcheck).                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `enable_upload`          | `true`                                                        | `true` to upload the merged SARIF to GitHub Advanced Security.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `category`               | `bos-code-scanning-kit`                                       | Code Scanning category for the SARIF upload. Override this when a repo runs the kit from more than one caller workflow for the same commit (e.g. a PR gate AND a release pipeline) so the two uploads don't collide under the same category and race/overwrite each other.                                                                                                                                                                                                                                                            |
+| `fail_on`                | `fail`                                                        | `fail` (default) — exit non-zero if posture has any FAIL findings or any scanner reports a result. `never` — collect findings but always exit 0 (useful for first-time rollouts).                                                                                                                                                                                                                                                                                                                                                     |
+| `http_timeout`           | `20`                                                          | Per-request HTTP timeout (seconds) for the posture audit's GitHub REST calls. Default `20`. Each probe is independent, so the practical upper bound on a posture run is roughly `http_timeout` \* number-of-probes (~10 on a baseline scan). Bump on self-hosted runners with slow egress, or to ride out brief GitHub API latency spikes that otherwise surface as `PS*** error: HTTP 502` rows. Bare integer string; no unit.                                                                                                       |
+| `sarif_output`           | `bos-scan.sarif`                                              | Path for the merged SARIF artefact.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+
 <!-- END action-inputs -->
 
 > The table above is auto-generated from `action.yml` by
@@ -209,13 +227,15 @@ the `commit` field of the GitHub Release JSON.
 ## 📤 Action outputs
 
 <!-- BEGIN action-outputs -->
-| Output | Description |
-| --- | --- |
-| `quality_applicability` | JSON object describing whether Node, Python, and Shell quality gates apply to the checked-out repository and why. |
-| `sarif_path` | Path to the merged SARIF file produced by the run. |
-| `posture_failures` | Number of FAIL findings from the posture audit. |
-| `recommendations_path` | Path to structured posture remediation recommendations. |
-| `outcome` | Severity-tier verdict for the run: `success` (no findings at any level), `warn` (only warning/note-level findings — nothing the enforcement policy would block on), or `failure` (at least one error-level finding from the posture audit or any scanner). Reflects severity only — it does NOT change based on `fail_on`, so callers can gate pipelines on the verdict independently of whether the kit step itself exited non-zero. |
+
+| Output                  | Description                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `quality_applicability` | JSON object describing whether Node, Python, and Shell quality gates apply to the checked-out repository and why.                                                                                                                                                                                                                                                                                                                     |
+| `sarif_path`            | Path to the merged SARIF file produced by the run.                                                                                                                                                                                                                                                                                                                                                                                    |
+| `posture_failures`      | Number of FAIL findings from the posture audit.                                                                                                                                                                                                                                                                                                                                                                                       |
+| `recommendations_path`  | Path to structured posture remediation recommendations.                                                                                                                                                                                                                                                                                                                                                                               |
+| `outcome`               | Severity-tier verdict for the run: `success` (no findings at any level), `warn` (only warning/note-level findings — nothing the enforcement policy would block on), or `failure` (at least one error-level finding from the posture audit or any scanner). Reflects severity only — it does NOT change based on `fail_on`, so callers can gate pipelines on the verdict independently of whether the kit step itself exited non-zero. |
+
 <!-- END action-outputs -->
 
 ### Structured recommendations
@@ -283,28 +303,125 @@ Walkthrough:
 
 Severities can be overridden per rule in any global or repository config tier.
 
-| Rule  | Default | What it checks                                                                                          |
-| ----- | ------- | ------------------------------------------------------------------------------------------------------- |
-| PS001 | warn    | GitHub code scanning is enabled via **either** Default setup **or** an Advanced workflow uploading CodeQL analyses. |
-| PS002 | warn    | GitHub secret scanning is enabled (probed via the secret-scanning alerts API).                          |
-| PS003 | warn    | Dependabot vulnerability alerts are enabled.                                                            |
-| PS004 | warn    | Secret-scanning **push protection** is enabled (refuses pushes that contain detected secrets; toggles independently of PS002). |
-| PS010 | warn    | Every workflow file declares an explicit top-level `permissions:` block.                                |
-| PS011 | warn    | No workflow uses `permissions: write-all` at the workflow or job level.                                 |
+| Rule  | Default | What it checks                                                                                                                                                                                                                      |
+| ----- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PS001 | warn    | GitHub code scanning is enabled via **either** Default setup **or** an Advanced workflow uploading CodeQL analyses.                                                                                                                 |
+| PS002 | warn    | GitHub secret scanning is enabled (probed via the secret-scanning alerts API).                                                                                                                                                      |
+| PS003 | warn    | Dependabot vulnerability alerts are enabled.                                                                                                                                                                                        |
+| PS004 | warn    | Secret-scanning **push protection** is enabled (refuses pushes that contain detected secrets; toggles independently of PS002).                                                                                                      |
+| PS010 | warn    | Every workflow file declares an explicit top-level `permissions:` block.                                                                                                                                                            |
+| PS011 | warn    | No workflow uses `permissions: write-all` at the workflow or job level.                                                                                                                                                             |
 | PS012 | warn    | Every third-party `uses:` reference (in `.github/workflows/` and `.github/actions/`) is pinned to a 40-char commit SHA. Local (`./`) and `docker://` refs are exempt; trusted `owner/repo` entries can be added to `allow_tag_pin`. |
-| PS020 | warn    | The branch has _some_ branch-protection rule configured.                                                |
-| PS021 | warn    | The branch requires at least N approving reviews (per-branch override).                                 |
-| PS022 | warn    | The branch restricts force pushes (`allow_force_pushes.enabled = false`).                               |
-| PS023 | warn    | The branch requires status checks to pass before merge.                                                 |
-| PS024 | warn    | The branch requires signed commits.                                                                     |
-| PS025 | warn    | The branch requires conversation resolution before merge.                                               |
-| PS030 | warn    | A `CODEOWNERS` file is present (root, `.github/`, or `docs/`).                                          |
-| PS031 | warn    | Every non-comment `CODEOWNERS` line references at least one owner (`@user` or `@org/team`).             |
-| PS032 | warn    | _(opt-in)_ Every `@org/team` referenced in `CODEOWNERS` exists. Requires `validate_users_exist: true`.  |
-| PS033 | warn    | _(opt-in)_ Every `@user` referenced in `CODEOWNERS` exists. Requires `validate_users_exist: true`.      |
+| PS020 | warn    | The branch has _some_ branch-protection rule configured.                                                                                                                                                                            |
+| PS021 | warn    | The branch requires at least N approving reviews (per-branch override).                                                                                                                                                             |
+| PS022 | warn    | The branch restricts force pushes (`allow_force_pushes.enabled = false`).                                                                                                                                                           |
+| PS023 | warn    | The branch requires status checks to pass before merge.                                                                                                                                                                             |
+| PS024 | warn    | The branch requires signed commits.                                                                                                                                                                                                 |
+| PS025 | warn    | The branch requires conversation resolution before merge.                                                                                                                                                                           |
+| PS030 | warn    | A `CODEOWNERS` file is present (root, `.github/`, or `docs/`).                                                                                                                                                                      |
+| PS031 | warn    | Every non-comment `CODEOWNERS` line references at least one owner (`@user` or `@org/team`).                                                                                                                                         |
+| PS032 | warn    | _(opt-in)_ Every `@org/team` referenced in `CODEOWNERS` exists. Requires `validate_users_exist: true`.                                                                                                                              |
+| PS033 | warn    | _(opt-in)_ Every `@user` referenced in `CODEOWNERS` exists. Requires `validate_users_exist: true`.                                                                                                                                  |
+| LD001 | —       | Dependency licence data is resolvable (the dependency graph is enabled and readable). Informational.                                                                                                                                |
+| LD002 | warn    | Every dependency declares a licence. SPDX `NOASSERTION` means all rights reserved — no redistribution is granted.                                                                                                                   |
+| LD003 | warn    | Every declared dependency licence is OSI-approved. Catches source-available licences (`BUSL-1.1`, `SSPL-1.0`, `Elastic-2.0`) and NonCommercial Creative Commons.                                                                    |
+| LD004 | warn    | Every dependency licence satisfies this repo's `allow` / `deny` policy. Skipped when neither list is set.                                                                                                                           |
+| LD005 | warn    | Every dependency licence can be combined into a work licensed as this project is. Catches copyleft pulled into a permissive project, and the `Apache-2.0` → `GPL-2.0` patent-clause conflict.                                       |
+| LF001 | skip    | _(opt-in)_ Source files carry `SPDX-License-Identifier` headers at or above `min_header_coverage`.                                                                                                                                  |
+| LF002 | warn    | No file in the working tree declares a licence other than the project's, unless allowlisted. This is what finds vendored third-party code.                                                                                          |
+| LF003 | warn    | Every copyright holder named in a source file is one the repository already declares in `LICENSE`, `NOTICE`, or the README.                                                                                                         |
+| LF004 | warn    | Every in-tree licence is compatible with the project licence.                                                                                                                                                                       |
 
 `PS000` is reserved for tooling errors (e.g. missing token) and is
 always emitted at `error` severity.
+
+### LD001-LD004 — dependency licences
+
+The kit's sibling, [`bos-marketplace-kit`][mk], audits _this repository's
+own_ licence (`LC001`-`LC006`). The `LD###` rules cover the other side of
+the boundary: the licences of everything you depend on.
+
+Package licences come from GitHub's dependency-graph SBOM
+(`GET /repos/{owner}/{repo}/dependency-graph/sbom`), which already spans
+every ecosystem GitHub resolves — so there is no per-ecosystem resolver to
+install and no registry to call. When the dependency graph is disabled or
+the token cannot read it, all four rules degrade to `skip` with the reason
+on `LD001`; they never fail the run for missing data.
+
+Classification runs against a **vendored snapshot** of
+[the OSI approved-licence list](https://opensource.org/licenses) at
+`src/osi-licenses.json`. That file and the resolver beside it,
+`src/osi_catalogue.py`, are generated and owned in
+[`bos-automation-hub`](https://github.com/blackoutsecure/bos-automation-hub)
+and delivered here by managed file sync as a versioned pair, so this kit
+and `bos-marketplace-kit` resolve any given licence string identically
+without either depending on the other. No call is made to opensource.org
+at scan time. The hub refreshes the snapshot from the SPDX license list
+with [`bos-upstream-watcher`](https://github.com/blackoutsecure/bos-upstream-watcher).
+
+SPDX expressions are evaluated per operand, and a dual-licensed package
+is judged permissively: `MIT OR AGPL-3.0` satisfies an `MIT` allowlist and
+escapes an `AGPL-3.0` denylist, because the consumer chooses which licence
+to take it under.
+
+### LF001-LF004 — working-tree licences and copyright
+
+Where `LD###` reads the dependency graph, `LF###` reads the files on
+disk — the equivalent of a ScanCode pass, but stdlib-only and offline.
+It walks source files by extension, reads the first 4 KB of each, and
+extracts `SPDX-License-Identifier` headers and copyright notices. Build
+and tooling output (`node_modules`, `.venv`, `dist`, `target`, …) is
+skipped; **vendored directories are not**, because third-party code
+checked into the repo is exactly what `LF002` exists to find.
+
+Compatibility (`LD005` and `LF004`) classifies each licence by how
+strongly it propagates its terms — `public-domain` → `permissive` →
+`weak-copyleft` → `strong-copyleft` → `network-copyleft` — and reports a
+dependency that is _more_ reciprocal than the project it lands in. A
+short table of known-incompatible pairs handles cases the ordering
+misses, such as `Apache-2.0` into `GPL-2.0`, where the patent-termination
+clause adds a restriction GPLv2 forbids. When either side is
+unclassified the engine returns `unknown` and stays quiet rather than
+guessing.
+
+`LF003` merges copyright notices per holder and unions their years, so
+`2019`, `2020-2021` and `2024` for the same holder collapse to
+`2019-2021, 2024`. Holders are matched case-insensitively.
+
+```yaml
+posture:
+  source_licenses:
+    require_spdx_headers: skip # LF001 — opt-in
+    min_header_coverage: 80
+    forbid_foreign_license: warn # LF002
+    require_consistent_copyright: warn # LF003
+    check_compatibility: warn # LF004
+    allow: [] # SPDX ids that may legitimately appear in-tree
+    project_license: auto # `auto` reads this repo's LICENSE
+    max_files: 5000
+```
+
+> **We are not lawyers, and none of this is legal advice.** The `LD###`
+> and `LF###` rules are automated compliance and attribution checks
+> against the [OSI approved-licence list](https://opensource.org/licenses).
+> The aim is to surface licence metadata that is missing, inconsistent,
+> or worth a closer look — not to tell you what is legally permissible.
+> Anything that turns on legal interpretation belongs with qualified
+> counsel.
+
+```yaml
+posture:
+  dependencies:
+    require_declared_license: warn # LD002
+    forbid_non_osi_license: warn # LD003
+    forbid_denied_license: fail # LD004
+    allow: [Apache-2.0, MIT, BSD-3-Clause, ISC]
+    deny: [AGPL-3.0, SSPL-1.0]
+```
+
+> The `LD###` rules are a compliance and hygiene check, not legal advice.
+
+[mk]: https://github.com/blackoutsecure/bos-marketplace-kit
 
 ## 🧪 Supported code scanning
 
@@ -315,24 +432,23 @@ posture findings into a single upload artefact (`bos-scan.sarif` by
 default). All third-party binaries are version-pinned and downloaded
 fresh per run; no scanner is sourced from `latest`.
 
-| Scanner            | Status   | Version   | Triggered when…                                              | What it scans                                                                          | Rule prefix         |
-| ------------------ | -------- | --------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------- |
-| **actionlint**     | ✅ v1.0  | `v1.7.1`  | `.github/workflows/*.{yml,yaml}` exists                      | GitHub Actions workflow YAML (syntax, expressions, embedded `run:` shell)              | `actionlint-native` |
-| **gitleaks**       | ✅ v1.0  | `v8.21.2` | Always (when `enable_scanners: true`)                        | Secrets across the working tree (API keys, tokens, private keys, etc.)                 | `gitleaks-native`   |
-| **shellcheck**     | ✅ v1.0  | `v0.10.0` | `**/*.sh` or `**/*.bash` exists                              | Shell-script issues (POSIX compliance, quoting, race conditions)                       | `SCNNNN`            |
-
+| Scanner        | Status  | Version   | Triggered when…                         | What it scans                                                             | Rule prefix         |
+| -------------- | ------- | --------- | --------------------------------------- | ------------------------------------------------------------------------- | ------------------- |
+| **actionlint** | ✅ v1.0 | `v1.7.1`  | `.github/workflows/*.{yml,yaml}` exists | GitHub Actions workflow YAML (syntax, expressions, embedded `run:` shell) | `actionlint-native` |
+| **gitleaks**   | ✅ v1.0 | `v8.21.2` | Always (when `enable_scanners: true`)   | Secrets across the working tree (API keys, tokens, private keys, etc.)    | `gitleaks-native`   |
+| **shellcheck** | ✅ v1.0 | `v0.10.0` | `**/*.sh` or `**/*.bash` exists         | Shell-script issues (POSIX compliance, quoting, race conditions)          | `SCNNNN`            |
 
 ### Tool inventory (v1.0)
 
 This table covers every external tool currently used by the shipped
 kit.
 
-| Tool | Purpose | License | Site |
-| ---- | ------- | ------- | ---- |
-| actionlint | Lint GitHub Actions workflow syntax, expressions, and embedded shell usage. | MIT | https://github.com/rhysd/actionlint |
-| gitleaks | Detect secrets in the repository working tree. | MIT | https://github.com/gitleaks/gitleaks |
-| ShellCheck | Analyze shell scripts for correctness, quoting, and portability issues. | GPL-3.0 | https://www.shellcheck.net |
-| PyYAML | Parse the Marketplace, global, and repository YAML/JSON config tiers. | MIT | https://pyyaml.org |
+| Tool       | Purpose                                                                     | License | Site                                 |
+| ---------- | --------------------------------------------------------------------------- | ------- | ------------------------------------ |
+| actionlint | Lint GitHub Actions workflow syntax, expressions, and embedded shell usage. | MIT     | https://github.com/rhysd/actionlint  |
+| gitleaks   | Detect secrets in the repository working tree.                              | MIT     | https://github.com/gitleaks/gitleaks |
+| ShellCheck | Analyze shell scripts for correctness, quoting, and portability issues.     | GPL-3.0 | https://www.shellcheck.net           |
+| PyYAML     | Parse the Marketplace, global, and repository YAML/JSON config tiers.       | MIT     | https://pyyaml.org                   |
 
 Only the tools listed above are executed by the current `action.yml`.
 
@@ -343,26 +459,26 @@ The scanner roster above is driven by the ecosystem detector
 the working tree along three axes. Anything not in this list will be
 silently ignored.
 
-| Axis              | Recognised values                                                                                                                  |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Languages         | `python` · `javascript` · `typescript` · `go` · `java` · `csharp` · `ruby` · `rust` · `shell`                                      |
-| Build artefacts   | Dockerfile · docker-compose · GitHub workflows · Terraform · Kubernetes manifests · Helm charts · shell scripts                    |
-| Package managers  | `pip` · `pyproject` · `poetry` · `npm` · `yarn` · `pnpm` · `go modules` · `maven` · `gradle` · `cargo` · `bundler` · `nuget`       |
-| CodeQL targets    | `python` · `javascript-typescript` · `go` · `java-kotlin` · `csharp` · `ruby` · `rust` (mapped from detected languages)            |
+| Axis             | Recognised values                                                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Languages        | `python` · `javascript` · `typescript` · `go` · `java` · `csharp` · `ruby` · `rust` · `shell`                                |
+| Build artefacts  | Dockerfile · docker-compose · GitHub workflows · Terraform · Kubernetes manifests · Helm charts · shell scripts              |
+| Package managers | `pip` · `pyproject` · `poetry` · `npm` · `yarn` · `pnpm` · `go modules` · `maven` · `gradle` · `cargo` · `bundler` · `nuget` |
+| CodeQL targets   | `python` · `javascript-typescript` · `go` · `java-kotlin` · `csharp` · `ruby` · `rust` (mapped from detected languages)      |
 
 ## 🏗️ Configuration inheritance and layering
 
 Configuration is merged in cascade order:
 
 1. **Marketplace config** — bundled at
-  `src/marketplace-config.json`.
-  It explicitly enables only broadly applicable, warning-level posture
-  checks: GHAS coverage, explicit workflow permissions, no `write-all`, and
-  pinned third-party actions. It also enables opportunistic AI triage with a
-  deterministic fallback. It does not select branches, require CODEOWNERS,
-  validate identities through the API, or add scanner exclusions on behalf
-  of every repository. Set `use_marketplace_config: false` to skip this tier
-  entirely and start from the plain dataclass defaults instead.
+   `src/marketplace-config.json`.
+   It explicitly enables only broadly applicable, warning-level posture
+   checks: GHAS coverage, explicit workflow permissions, no `write-all`, and
+   pinned third-party actions. It also enables opportunistic AI triage with a
+   deterministic fallback. It does not select branches, require CODEOWNERS,
+   validate identities through the API, or add scanner exclusions on behalf
+   of every repository. Set `use_marketplace_config: false` to skip this tier
+   entirely and start from the plain dataclass defaults instead.
 2. **Organization global config** — optional
    `.github/blackout-secure-code-scanning-kit-global-config.yml`. `auto`
    loads it when present, `true` requires it, and `false` disables it.
@@ -384,11 +500,11 @@ cascade.
 
 Settings omitted from the Marketplace file use the implementation defaults:
 automatic ecosystem/tool detection, automatic CodeQL language detection,
-  `scan.fail_on: high`, advisory `warn` severities for posture rules,
-  `detect_msdo: skip`, and AI-assisted triage with deterministic local
-  fallback. AI is opportunistic: GitHub Models is used when a usable token is
-  present, and provider failures never fail the scan. Findings are sent to a
-  model only when AI is enabled and a provider is detected.
+`scan.fail_on: high`, advisory `warn` severities for posture rules,
+`detect_msdo: skip`, and AI-assisted triage with deterministic local
+fallback. AI is opportunistic: GitHub Models is used when a usable token is
+present, and provider failures never fail the scan. Findings are sent to a
+model only when AI is enabled and a provider is detected.
 
 Universal config files place this kit's settings under `code_scanning`:
 
@@ -429,50 +545,57 @@ flat `.bos-scan.yml` or nested under `code_scanning` in a universal config:
 ```yaml
 # .bos-scan.yml - repository overrides
 
-owner:        blackoutsecure
+owner: blackoutsecure
 project_name: my-action
-email:        security@example.com
+email: security@example.com
 
 scan:
-  tools:   auto              # auto | explicit | none
-  exclude: []                # scanners to skip even if their fingerprint matches
-  fail_on: high              # critical | high | medium | low | never
+  tools: auto # auto | explicit | none
+  exclude: [] # scanners to skip even if their fingerprint matches
+  fail_on: high # critical | high | medium | low | never
   codeql:
-    languages: []            # explicit CodeQL languages; empty => auto-detect
+    languages: [] # explicit CodeQL languages; empty => auto-detect
     exclude_languages: []
 
 posture:
   ghas:
-    require_code_scanning:     warn   # fail | warn | skip
-    require_secret_scanning:   warn
+    require_code_scanning: warn # fail | warn | skip
+    require_secret_scanning: warn
     require_dependabot_alerts: warn
-    require_push_protection:   warn
+    require_push_protection: warn
 
   workflows:
     require_permissions_block: warn
-    forbid_write_all:          warn
-    require_pinned_actions:    warn   # PS012 - fail | warn | skip
-    allow_tag_pin: []                 # owner/repo entries exempted from PS012 (e.g. ['actions/checkout'])
-    detect_msdo:                skip
+    forbid_write_all: warn
+    require_pinned_actions: warn # PS012 - fail | warn | skip
+    allow_tag_pin: [] # owner/repo entries exempted from PS012 (e.g. ['actions/checkout'])
+    detect_msdo: skip
 
   branches:
     main:
-      required_reviews:                2
-      restrict_force_push:             true
-      require_status_checks:           true
-      require_signed_commits:          true
+      required_reviews: 2
+      restrict_force_push: true
+      require_status_checks: true
+      require_signed_commits: true
       require_conversation_resolution: true
-      severity:                        fail
+      severity: fail
     dev:
-      required_reviews:                1
-      severity:                        warn
+      required_reviews: 1
+      severity: warn
 
   codeowners:
-    require_file:         warn
-    validate_users_exist: false   # set true to probe each @user/@org-team via API
+    require_file: warn
+    validate_users_exist: false # set true to probe each @user/@org-team via API
+
+  dependencies:
+    require_declared_license: warn # LD002
+    forbid_non_osi_license: warn # LD003
+    forbid_denied_license: warn # LD004 (skipped unless allow/deny is set)
+    allow: [] # SPDX allowlist; empty accepts any OSI-approved licence
+    deny: [] # SPDX denylist, checked before allow
 
 remediation:
-  enable_ai_findings_summary: true   # false disables all model calls
+  enable_ai_findings_summary: true # false disables all model calls
   ai_findings_summary_provider: auto # auto | none | github-models | external name
   local_heuristic_fallback: true
 ```

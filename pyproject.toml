@@ -79,7 +79,7 @@ ignore = [
 "test/**" = ["S", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["_version", "cli", "config", "detect", "posture", "sarif"]
+known-first-party = ["_version", "cli", "config", "detect", "licensing", "osi_catalogue", "posture", "sarif"]
 
 [tool.hatch.build.targets.wheel]
 only-include = ["src"]

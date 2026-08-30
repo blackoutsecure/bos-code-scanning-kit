@@ -11,6 +11,25 @@
         "require_permissions_block": "warn",
         "forbid_write_all": "warn",
         "require_pinned_actions": "warn"
+      },
+      "dependencies": {
+        "require_declared_license": "warn",
+        "forbid_non_osi_license": "warn",
+        "forbid_denied_license": "warn",
+        "check_compatibility": "warn",
+        "allow": [],
+        "deny": [],
+        "catalogue_max_age_days": 400
+      },
+      "source_licenses": {
+        "require_spdx_headers": "skip",
+        "min_header_coverage": 80,
+        "forbid_foreign_license": "warn",
+        "require_consistent_copyright": "warn",
+        "check_compatibility": "warn",
+        "allow": [],
+        "project_license": "auto",
+        "max_files": 5000
       }
     },
     "remediation": {

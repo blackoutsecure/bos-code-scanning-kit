@@ -111,11 +111,50 @@ class CodeownersPosture:
 
 
 @dataclass(frozen=True)
+class DependenciesPosture:
+    # LD001-LD004 — licences of everything the repo depends on, read from
+    # the GitHub dependency-graph SBOM. `allow` is an SPDX allowlist; when
+    # empty, any OSI-approved licence is accepted. `deny` is checked first
+    # and is the usual home for copyleft a permissive project cannot take.
+    require_declared_license: str = "warn"       # LD002
+    forbid_non_osi_license: str = "warn"         # LD003
+    forbid_denied_license: str = "warn"          # LD004
+    allow: tuple[str, ...] = ()
+    deny: tuple[str, ...] = ()
+    # How old the vendored OSI snapshot may be before LD001 reports that
+    # its approval verdicts might be out of date. 0 disables the check.
+    catalogue_max_age_days: int = 400
+    # LD005 — inbound compatibility of each dependency licence with the
+    # licence this project ships under.
+    check_compatibility: str = "warn"
+
+
+@dataclass(frozen=True)
+class SourceLicensePosture:
+    # LF001-LF004 — licence and copyright notices in the working tree,
+    # read straight off disk. This is what catches vendored third-party
+    # code carrying terms the project cannot take.
+    require_spdx_headers: str = "skip"        # LF001 (opt-in; most repos have none)
+    min_header_coverage: int = 80             # percent, when LF001 is enabled
+    forbid_foreign_license: str = "warn"      # LF002
+    require_consistent_copyright: str = "warn"  # LF003
+    check_compatibility: str = "warn"         # LF004
+    # SPDX ids that may legitimately appear in-tree alongside the project
+    # licence, e.g. `CC-BY-4.0` docs or an intentionally vendored library.
+    allow: tuple[str, ...] = ()
+    # `auto` reads the repository's own LICENSE file.
+    project_license: str = "auto"
+    max_files: int = 5000
+
+
+@dataclass(frozen=True)
 class PostureConfig:
     ghas: GHASPosture = field(default_factory=GHASPosture)
     workflows: WorkflowsPosture = field(default_factory=WorkflowsPosture)
     branches: dict[str, BranchPosture] = field(default_factory=dict)
     codeowners: CodeownersPosture = field(default_factory=CodeownersPosture)
+    dependencies: DependenciesPosture = field(default_factory=DependenciesPosture)
+    source_licenses: SourceLicensePosture = field(default_factory=SourceLicensePosture)
 
 
 @dataclass(frozen=True)
@@ -431,11 +470,42 @@ def _posture_from_dict(d: dict[str, Any]) -> PostureConfig:
         validate_users_exist=_bool(co_d, "validate_users_exist", False),
     )
 
+    dep_d = _dict(d, "dependencies")
+    dependencies = DependenciesPosture(
+        require_declared_license=_severity(dep_d, "require_declared_license", "warn"),
+        forbid_non_osi_license=_severity(dep_d, "forbid_non_osi_license", "warn"),
+        forbid_denied_license=_severity(dep_d, "forbid_denied_license", "warn"),
+        allow=_str_tuple(dep_d, "allow"),
+        deny=_str_tuple(dep_d, "deny"),
+        catalogue_max_age_days=_non_negative_int(
+            dep_d, "catalogue_max_age_days", 400,
+            label="posture.dependencies.catalogue_max_age_days"),
+        check_compatibility=_severity(dep_d, "check_compatibility", "warn"),
+    )
+
+    src_d = _dict(d, "source_licenses")
+    source_licenses = SourceLicensePosture(
+        require_spdx_headers=_severity(src_d, "require_spdx_headers", "skip"),
+        min_header_coverage=_non_negative_int(
+            src_d, "min_header_coverage", 80,
+            label="posture.source_licenses.min_header_coverage"),
+        forbid_foreign_license=_severity(src_d, "forbid_foreign_license", "warn"),
+        require_consistent_copyright=_severity(
+            src_d, "require_consistent_copyright", "warn"),
+        check_compatibility=_severity(src_d, "check_compatibility", "warn"),
+        allow=_str_tuple(src_d, "allow"),
+        project_license=_str(src_d, "project_license", "auto") or "auto",
+        max_files=_non_negative_int(
+            src_d, "max_files", 5000, label="posture.source_licenses.max_files"),
+    )
+
     return PostureConfig(
         ghas=ghas,
         workflows=workflows,
         branches=branches,
         codeowners=codeowners,
+        dependencies=dependencies,
+        source_licenses=source_licenses,
     )
 
 
@@ -483,6 +553,14 @@ def _str(d: dict[str, Any], key: str, default: str = "") -> str:
     if not isinstance(value, str):
         raise ConfigError(f"`{key}`: must be a string")
     return value.strip()
+
+
+def _non_negative_int(d: dict[str, Any], key: str, default: int, *,
+                      label: str | None = None) -> int:
+    value = d.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ConfigError(f"`{label or key}`: must be a non-negative integer")
+    return value
 
 
 def _bool(d: dict[str, Any], key: str, default: bool) -> bool:
