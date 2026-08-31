@@ -490,7 +490,7 @@ runs:
     # SHA pin per Marketplace SC002 hygiene; bump via Dependabot.
     - name: Upload SARIF to GitHub Advanced Security
       if: always() && inputs.enable_upload == 'true' && steps.merge.outcome == 'success'
-      uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+      uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
       with:
         sarif_file: ${{ steps.merge.outputs.sarif_path }}
         category: ${{ inputs.category }}
