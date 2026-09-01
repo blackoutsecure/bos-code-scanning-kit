@@ -29,27 +29,27 @@ run-name: Gatekeeper / ${{ inputs.operation || 'full' }} / ref:${{ github.ref_na
   schedule:
     # Upstream-change check: only releases when the monitor stage detects a
     # new version (or the `41 3 * * 0` cron below forces one regardless).
-    - cron: '17 */6 * * *'
+    - cron: "17 */6 * * *"
     # Weekly forced rebuild (Sun 03:41 UTC): re-runs the full pipeline even
     # with no upstream version change, so base-image/dependency patches still
     # land periodically. Mapped to `force: true` by the "Resolve dispatch"
     # step below via `github.event.schedule`. Add further cron entries there
     # if more scheduled operations are needed later.
-    - cron: '41 3 * * 0'
+    - cron: "41 3 * * 0"
   push:
     branches: [main]
     paths:
-      - 'Dockerfile'
-      - '.dockerignore'
-      - 'root/**'
-      - 'build/**'
-      - 'scripts/**'
-      - '.github/bos-universal-config.json'
-      - '.github/workflows/bos-universal-gatekeeper-kicker.yml'
+      - "Dockerfile"
+      - ".dockerignore"
+      - "root/**"
+      - "build/**"
+      - "scripts/**"
+      - ".github/bos-universal-config.json"
+      - ".github/workflows/bos-universal-gatekeeper-kicker.yml"
   workflow_dispatch:
     inputs:
       operation:
-        description: 'Which managed pipeline to run.'
+        description: "Which managed pipeline to run."
         type: choice
         options:
           - full
@@ -62,17 +62,17 @@ run-name: Gatekeeper / ${{ inputs.operation || 'full' }} / ref:${{ github.ref_na
           - marketplace_release
         default: full
       force_run:
-        description: 'Force: run pipeline even if upstream unchanged.'
+        description: "Force: run pipeline even if upstream unchanged."
         type: boolean
         default: false
       dry_run:
-        description: 'Preview only — applies to metadata and marketplace_release.'
+        description: "Preview only — applies to metadata and marketplace_release."
         type: boolean
         default: false
       tag_name:
-        description: 'Optional SemVer tag for marketplace_release; empty auto-bumps.'
+        description: "Optional SemVer tag for marketplace_release; empty auto-bumps."
         type: string
-        default: ''
+        default: ""
 
 permissions:
   contents: read
@@ -310,6 +310,20 @@ jobs:
           echo "run_publish=${run_publish}" >> "${GITHUB_OUTPUT}"
           echo "run_security=${run_security}" >> "${GITHUB_OUTPUT}"
 
+      - name: Validate routing outputs
+        shell: bash
+        env:
+          OPERATION: ${{ steps.dispatch.outputs.operation }}
+          TARGET_REF: ${{ needs.resolve-target-ref.outputs.target_ref }}
+          RUN_PUBLISH: ${{ steps.dispatch.outputs.run_publish }}
+          RUN_SECURITY: ${{ steps.dispatch.outputs.run_security }}
+        run: |
+          set -euo pipefail
+          case "${TARGET_REF}" in dev|main) ;; *) echo "::error::Invalid target_ref '${TARGET_REF}'."; exit 1 ;; esac
+          case "${OPERATION}" in full|release_only|security_only|sync_only|action_test|metadata|marketplace_validate|marketplace_release) ;; *) echo "::error::Invalid operation '${OPERATION}'."; exit 1 ;; esac
+          case "${RUN_PUBLISH}:${RUN_SECURITY}" in true:true|true:false|false:true|false:false) ;; *) echo "::error::Invalid stage routing flags."; exit 1 ;; esac
+          echo "::notice title=Dispatch route::operation=${OPERATION}, target_ref=${TARGET_REF}, publish=${RUN_PUBLISH}, security=${RUN_SECURITY}"
+
   # Verify the runner actually has the toolchain this repo declares before any
   # routed operation starts. Skipped when `gatekeeper.preflight` is absent.
   preflight:
@@ -340,7 +354,7 @@ jobs:
   action-test:
     name: Action test
     needs: parse-config
-    if: needs.parse-config.outputs.operation == 'action_test'
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'action_test'
     permissions:
       contents: read
       models: read
@@ -352,23 +366,23 @@ jobs:
   metadata:
     name: Repository metadata
     needs: parse-config
-    if: needs.parse-config.outputs.operation == 'metadata'
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'metadata'
     permissions:
       contents: read
       models: read
     uses: blackoutsecure/bos-automation-hub/.github/workflows/repo-metadata-sync.yml@main
     with:
-      description:      ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description || '' }}
+      description: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description || '' }}
       description_mode: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description_mode || 'auto' }}
-      homepage:         ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.homepage || '' }}
-      topics:           ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.topics || '' }}
-      generate_topics:  ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.generate_topics == true }}
-      ai_enabled:       ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_enabled != false }}
-      ai_model:         ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_model || 'auto' }}
-      show_releases:    ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_releases != false }}
+      homepage: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.homepage || '' }}
+      topics: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.topics || '' }}
+      generate_topics: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.generate_topics == true }}
+      ai_enabled: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_enabled != false }}
+      ai_model: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_model || 'auto' }}
+      show_releases: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_releases != false }}
       show_deployments: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_deployments == true }}
-      show_packages:    ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_packages == true }}
-      dry_run:          ${{ inputs.dry_run == true || fromJson(needs.parse-config.outputs.cfg).repo_metadata.dry_run == true }}
+      show_packages: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_packages == true }}
+      dry_run: ${{ inputs.dry_run == true || fromJson(needs.parse-config.outputs.cfg).repo_metadata.dry_run == true }}
     secrets: inherit
 
   # `operation: marketplace_validate` — Marketplace manifest and rule checks.
@@ -377,12 +391,12 @@ jobs:
   marketplace-validate:
     name: Marketplace validation
     needs: parse-config
-    if: needs.parse-config.outputs.operation == 'marketplace_validate'
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'marketplace_validate'
     permissions:
       contents: read
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-marketplace.yml@main
     with:
-      action_yml_path:      ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.action_yml_path || 'action.yml' }}
+      action_yml_path: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.action_yml_path || 'action.yml' }}
       run_branding_preview: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.run_branding_preview != false }}
     secrets: inherit
 
@@ -391,17 +405,17 @@ jobs:
   marketplace-release:
     name: Marketplace release
     needs: parse-config
-    if: needs.parse-config.outputs.operation == 'marketplace_release'
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'marketplace_release'
     permissions:
       contents: write
       models: read
     uses: blackoutsecure/bos-automation-hub/.github/workflows/release-promote.yml@main
     with:
-      source_branch:   ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.source_branch || 'dev' }}
-      target_branch:   ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.target_branch || 'main' }}
+      source_branch: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.source_branch || 'dev' }}
+      target_branch: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.target_branch || 'main' }}
       allowlist_paths: ${{ fromJson(needs.parse-config.outputs.cfg).marketplace.allowlist_paths || 'action.yml' }}
-      tag_name:        ${{ inputs.tag_name || '' }}
-      dry_run:         ${{ inputs.dry_run == true }}
+      tag_name: ${{ inputs.tag_name || '' }}
+      dry_run: ${{ inputs.dry_run == true }}
     secrets: inherit
 
   # `sync_only` stops here — `sync-check-{dev,main}` above already ran the
@@ -411,66 +425,66 @@ jobs:
     name: Release (dev)
     needs: parse-config
     if: >-
-      needs.parse-config.outputs.target_ref == 'dev'
-      && contains(fromJson('["full","release_only","security_only"]'), needs.parse-config.outputs.operation)
+      github.ref_name == 'dev'
+      && (github.event_name != 'workflow_dispatch' || contains(fromJson('["full","release_only","security_only"]'), inputs.operation))
     permissions:
-      contents:        write   # monitor tracking-file commit + GitHub Release publish
-      actions:         write   # nested monitor (`gh workflow run`)
-      pull-requests:   write   # nested Docker Scout PR annotations
-      security-events: write   # nested Docker Scout SARIF upload
-      models:          read    # nested release.yml -> github-release.yml AI changelog
+      contents: write # monitor tracking-file commit + GitHub Release publish
+      actions: write # nested monitor (`gh workflow run`)
+      pull-requests: write # nested Docker Scout PR annotations
+      security-events: write # nested Docker Scout SARIF upload
+      models: read # nested release.yml -> github-release.yml AI changelog
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-gatekeeper.yml@dev
     with:
-      upstream_repo:     ${{ fromJson(needs.parse-config.outputs.cfg).upstream.repo || '' }}
-      source:            ${{ fromJson(needs.parse-config.outputs.cfg).upstream.source || 'github_release' }}
-      upstream_branch:   ${{ fromJson(needs.parse-config.outputs.cfg).upstream.branch || '' }}
+      upstream_repo: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.repo || '' }}
+      source: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.source || 'github_release' }}
+      upstream_branch: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.branch || '' }}
       version_file_path: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.version_file_path || 'version' }}
-      version_regex:     ${{ fromJson(needs.parse-config.outputs.cfg).upstream.version_regex || '' }}
-      image_ref:         ${{ fromJson(needs.parse-config.outputs.cfg).upstream.image_ref || '' }}
-      package_name:      ${{ fromJson(needs.parse-config.outputs.cfg).upstream.package_name || '' }}
-      version_url:       ${{ fromJson(needs.parse-config.outputs.cfg).upstream.version_url || '' }}
-      tag_pattern:       ${{ fromJson(needs.parse-config.outputs.cfg).upstream.tag_pattern || '' }}
-      track_file:        ${{ fromJson(needs.parse-config.outputs.cfg).upstream.track_file || '.github/upstream/tracked-release.json' }}
+      version_regex: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.version_regex || '' }}
+      image_ref: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.image_ref || '' }}
+      package_name: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.package_name || '' }}
+      version_url: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.version_url || '' }}
+      tag_pattern: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.tag_pattern || '' }}
+      track_file: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.track_file || '.github/upstream/tracked-release.json' }}
       force_run: ${{ needs.parse-config.outputs.force_run == 'true' }}
 
       # `run_publish` is resolved once in parse-config from the dispatch
       # operation: false for `security_only`, true for `full`/`release_only`.
-      docker:           ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.docker == true }}
-      balena:           ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.balena == true }}
-      github_release:   ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.github_release == true }}
+      docker: ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.docker == true }}
+      balena: ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.balena == true }}
+      github_release: ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.github_release == true }}
       companion_docker: ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.companion_docker == true }}
 
-      image_name:                ${{ fromJson(needs.parse-config.outputs.cfg).docker.image_name || '' }}
-      dockerhub_namespace:       ${{ vars[fromJson(needs.parse-config.outputs.cfg).docker.namespace_var || 'DOCKERHUB_NAMESPACE'] }}
-      docker_extra_tags:         ${{ fromJson(needs.parse-config.outputs.cfg).docker.extra_tags || '' }}
-      docker_short_description:  ${{ fromJson(needs.parse-config.outputs.cfg).docker.short_description || '' }}
-      docker_latest:             ${{ fromJson(needs.parse-config.outputs.cfg).docker.latest != false }}
-      docker_multi_arch:         ${{ fromJson(needs.parse-config.outputs.cfg).docker.multi_arch != false }}
+      image_name: ${{ fromJson(needs.parse-config.outputs.cfg).docker.image_name || '' }}
+      dockerhub_namespace: ${{ vars[fromJson(needs.parse-config.outputs.cfg).docker.namespace_var || 'DOCKERHUB_NAMESPACE'] }}
+      docker_extra_tags: ${{ fromJson(needs.parse-config.outputs.cfg).docker.extra_tags || '' }}
+      docker_short_description: ${{ fromJson(needs.parse-config.outputs.cfg).docker.short_description || '' }}
+      docker_latest: ${{ fromJson(needs.parse-config.outputs.cfg).docker.latest != false }}
+      docker_multi_arch: ${{ fromJson(needs.parse-config.outputs.cfg).docker.multi_arch != false }}
       docker_update_description: ${{ fromJson(needs.parse-config.outputs.cfg).docker.update_description != false }}
       docker_force: ${{ needs.parse-config.outputs.force_run == 'true' }}
 
       # ----- Docker Scout -----
-      docker_enable_scout:             ${{ fromJson(needs.parse-config.outputs.cfg).scout.enable != false }}
-      docker_scout_command:            ${{ fromJson(needs.parse-config.outputs.cfg).scout.command || 'cves' }}
-      docker_scout_severities:         ${{ fromJson(needs.parse-config.outputs.cfg).scout.severities || 'critical,high' }}
-      docker_scout_only_fixed:         ${{ fromJson(needs.parse-config.outputs.cfg).scout.only_fixed == true }}
-      docker_scout_ignore_base:        ${{ fromJson(needs.parse-config.outputs.cfg).scout.ignore_base == true }}
-      docker_scout_organization:       ${{ fromJson(needs.parse-config.outputs.cfg).scout.organization || '' }}
+      docker_enable_scout: ${{ fromJson(needs.parse-config.outputs.cfg).scout.enable != false }}
+      docker_scout_command: ${{ fromJson(needs.parse-config.outputs.cfg).scout.command || 'cves' }}
+      docker_scout_severities: ${{ fromJson(needs.parse-config.outputs.cfg).scout.severities || 'critical,high' }}
+      docker_scout_only_fixed: ${{ fromJson(needs.parse-config.outputs.cfg).scout.only_fixed == true }}
+      docker_scout_ignore_base: ${{ fromJson(needs.parse-config.outputs.cfg).scout.ignore_base == true }}
+      docker_scout_organization: ${{ fromJson(needs.parse-config.outputs.cfg).scout.organization || '' }}
       docker_scout_record_environment: ${{ fromJson(needs.parse-config.outputs.cfg).scout.record_environment || '' }}
-      docker_scout_sarif_upload:       ${{ fromJson(needs.parse-config.outputs.cfg).scout.sarif_upload != false }}
-      docker_scout_exit_code:          ${{ fromJson(needs.parse-config.outputs.cfg).scout.exit_code == true }}
-      docker_scout_enable_repo:        ${{ fromJson(needs.parse-config.outputs.cfg).scout.enable_repo != false }}
+      docker_scout_sarif_upload: ${{ fromJson(needs.parse-config.outputs.cfg).scout.sarif_upload != false }}
+      docker_scout_exit_code: ${{ fromJson(needs.parse-config.outputs.cfg).scout.exit_code == true }}
+      docker_scout_enable_repo: ${{ fromJson(needs.parse-config.outputs.cfg).scout.enable_repo != false }}
 
       # ----- Balena stage -----
-      block_name:                 ${{ fromJson(needs.parse-config.outputs.cfg).balena.block_name || '' }}
-      balena_namespace:           ${{ vars[fromJson(needs.parse-config.outputs.cfg).balena.namespace_var || 'BALENA_NAMESPACE'] }}
-      balena_sync_yml:            ${{ fromJson(needs.parse-config.outputs.cfg).balena.sync_yml != false }}
-      balena_draft:               ${{ fromJson(needs.parse-config.outputs.cfg).balena.draft == true }}
+      block_name: ${{ fromJson(needs.parse-config.outputs.cfg).balena.block_name || '' }}
+      balena_namespace: ${{ vars[fromJson(needs.parse-config.outputs.cfg).balena.namespace_var || 'BALENA_NAMESPACE'] }}
+      balena_sync_yml: ${{ fromJson(needs.parse-config.outputs.cfg).balena.sync_yml != false }}
+      balena_draft: ${{ fromJson(needs.parse-config.outputs.cfg).balena.draft == true }}
       balena_force: ${{ needs.parse-config.outputs.force_run == 'true' }}
-      balena_generate_yml:        ${{ fromJson(needs.parse-config.outputs.cfg).balena.generate_yml == true }}
-      balena_type:                ${{ fromJson(needs.parse-config.outputs.cfg).balena.type || 'sw.block' }}
-      balena_repository_url:      ${{ fromJson(needs.parse-config.outputs.cfg).balena.repository_url || '' }}
-      balena_logo_url:            ${{ fromJson(needs.parse-config.outputs.cfg).balena.logo_url || '' }}
+      balena_generate_yml: ${{ fromJson(needs.parse-config.outputs.cfg).balena.generate_yml == true }}
+      balena_type: ${{ fromJson(needs.parse-config.outputs.cfg).balena.type || 'sw.block' }}
+      balena_repository_url: ${{ fromJson(needs.parse-config.outputs.cfg).balena.repository_url || '' }}
+      balena_logo_url: ${{ fromJson(needs.parse-config.outputs.cfg).balena.logo_url || '' }}
       balena_default_device_type: ${{ fromJson(needs.parse-config.outputs.cfg).balena.default_device_type || '' }}
       # `|-` chomps the trailing newline that a plain `|` block would
       # add at each forwarding hop, so multi-line caller values stay
@@ -483,65 +497,64 @@ jobs:
         ${{ fromJson(needs.parse-config.outputs.cfg).balena.supported_device_types || '' }}
 
       # ----- Companion Docker stage -----
-      companion_image_name:               ${{ fromJson(needs.parse-config.outputs.cfg).companion_docker.image_name || '' }}
-      companion_build_target:             ${{ fromJson(needs.parse-config.outputs.cfg).companion_docker.build_target || '' }}
+      companion_image_name: ${{ fromJson(needs.parse-config.outputs.cfg).companion_docker.image_name || '' }}
+      companion_build_target: ${{ fromJson(needs.parse-config.outputs.cfg).companion_docker.build_target || '' }}
       companion_docker_short_description: ${{ fromJson(needs.parse-config.outputs.cfg).companion_docker.short_description || '' }}
 
       # ----- Cloudflare Pages stage -----
-      cloudflare_pages:                     ${{ needs.parse-config.outputs.operation != 'security_only' && fromJson(needs.parse-config.outputs.cfg).stages.cloudflare_pages == true }}
-      cloudflare_project_name:              ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.project_name || '' }}
-      cloudflare_deployment_environment:    ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deployment_environment || '' }}
-      cloudflare_site_url:                  ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.site_url || '' }}
-      cloudflare_public_dir:                ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.public_dir || '.' }}
-      cloudflare_deploy_dir:                ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy_dir || './dist' }}
-      cloudflare_clean_deploy_dir:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.clean_deploy_dir != false }}
+      cloudflare_pages: ${{ needs.parse-config.outputs.operation != 'security_only' && fromJson(needs.parse-config.outputs.cfg).stages.cloudflare_pages == true }}
+      cloudflare_project_name: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.project_name || '' }}
+      cloudflare_deployment_environment: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deployment_environment || '' }}
+      cloudflare_site_url: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.site_url || '' }}
+      cloudflare_public_dir: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.public_dir || '.' }}
+      cloudflare_deploy_dir: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy_dir || './dist' }}
+      cloudflare_clean_deploy_dir: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.clean_deploy_dir != false }}
       cloudflare_copy_files: |-
         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.copy_files || '' }}
       cloudflare_copy_dirs: |-
         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.copy_dirs || '' }}
-      cloudflare_prebuild_command:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.prebuild_command || '' }}
-      cloudflare_working_directory:         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.working_directory || '' }}
-      cloudflare_branch:                    ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.branch || '' }}
-      cloudflare_commit_message:            ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.commit_message || '' }}
-      cloudflare_wrangler_version:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.wrangler_version || '' }}
-      cloudflare_extra_wrangler_args:       ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.extra_wrangler_args || '' }}
-      cloudflare_ai_bindings:               ${{ toJson(fromJson(needs.parse-config.outputs.cfg).cloudflare.ai_bindings || fromJson('[]')) }}
-      cloudflare_deploy_artifact_name:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy_artifact_name || '' }}
-      cloudflare_deploy:                    ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy || '' }}
-      cloudflare_runs_on:                   ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.runs_on || '' }}
-      cloudflare_checkout_fetch_depth:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.checkout_fetch_depth || 0 }}
-      cloudflare_purge_cache:               ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.purge_cache != false }}
+      cloudflare_prebuild_command: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.prebuild_command || '' }}
+      cloudflare_working_directory: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.working_directory || '' }}
+      cloudflare_branch: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.branch || '' }}
+      cloudflare_commit_message: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.commit_message || '' }}
+      cloudflare_wrangler_version: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.wrangler_version || '' }}
+      cloudflare_extra_wrangler_args: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.extra_wrangler_args || '' }}
+      cloudflare_ai_bindings: ${{ toJson(fromJson(needs.parse-config.outputs.cfg).cloudflare.ai_bindings || fromJson('[]')) }}
+      cloudflare_deploy_artifact_name: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy_artifact_name || '' }}
+      cloudflare_deploy: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy || '' }}
+      cloudflare_runs_on: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.runs_on || '' }}
+      cloudflare_checkout_fetch_depth: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.checkout_fetch_depth || 0 }}
+      cloudflare_purge_cache: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.purge_cache != false }}
 
       # ----- Cloudflare generators -----
-      cloudflare_generate_sitemap:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_sitemap == true }}
-      cloudflare_generate_robots:           ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_robots == true }}
-      cloudflare_generate_security_txt:     ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_security_txt == true }}
-      cloudflare_generate_humans_txt:       ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_humans_txt == true }}
-      cloudflare_security_contact:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.security_contact || '' }}
-      cloudflare_generator_audit:           ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generator_audit == true }}
-      cloudflare_generator_audit_fail_on:   ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generator_audit_fail_on || 'never' }}
+      cloudflare_generate_sitemap: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_sitemap == true }}
+      cloudflare_generate_robots: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_robots == true }}
+      cloudflare_generate_security_txt: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_security_txt == true }}
+      cloudflare_generate_humans_txt: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_humans_txt == true }}
+      cloudflare_security_contact: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.security_contact || '' }}
+      cloudflare_generator_audit: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generator_audit == true }}
+      cloudflare_generator_audit_fail_on: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generator_audit_fail_on || 'never' }}
       cloudflare_generator_audit_artifact_name: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generator_audit_artifact_name || 'site-compliance-reports' }}
-      cloudflare_generate_manifest:         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_manifest == true }}
-      cloudflare_manifest_name:             ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_name || '' }}
-      cloudflare_manifest_short_name:       ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_short_name || '' }}
-      cloudflare_manifest_description:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_description || '' }}
-      cloudflare_manifest_orientation:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_orientation || '' }}
-      cloudflare_manifest_theme_color:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_theme_color || '' }}
+      cloudflare_generate_manifest: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_manifest == true }}
+      cloudflare_manifest_name: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_name || '' }}
+      cloudflare_manifest_short_name: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_short_name || '' }}
+      cloudflare_manifest_description: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_description || '' }}
+      cloudflare_manifest_orientation: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_orientation || '' }}
+      cloudflare_manifest_theme_color: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_theme_color || '' }}
       cloudflare_manifest_background_color: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_background_color || '' }}
-      cloudflare_manifest_lang:             ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_lang || '' }}
-      cloudflare_manifest_dir:              ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_dir || '' }}
-      cloudflare_manifest_categories:       ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_categories || '' }}
-      cloudflare_manifest_icons_dir:        ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_icons_dir || '' }}
-      cloudflare_generate_redirects:        ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_redirects == true }}
+      cloudflare_manifest_lang: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_lang || '' }}
+      cloudflare_manifest_dir: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_dir || '' }}
+      cloudflare_manifest_categories: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_categories || '' }}
+      cloudflare_manifest_icons_dir: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_icons_dir || '' }}
+      cloudflare_generate_redirects: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_redirects == true }}
       cloudflare_redirects_custom_rules: |-
         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.redirects_custom_rules || '' }}
       cloudflare_redirects_replace_existing: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.redirects_replace_existing == true }}
-
       # ----- Cloudflare headers generator -----
-      cloudflare_generate_headers:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_headers == true }}
-      cloudflare_headers_presets:           ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_presets || 'security,cache' }}
-      cloudflare_headers_csp:               ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_csp || '' }}
-      cloudflare_headers_hsts_max_age:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_hsts_max_age || '63072000' }}
+      cloudflare_generate_headers: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_headers == true }}
+      cloudflare_headers_presets: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_presets || 'security,cache' }}
+      cloudflare_headers_csp: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_csp || '' }}
+      cloudflare_headers_hsts_max_age: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_hsts_max_age || '63072000' }}
       cloudflare_headers_permissions_policy: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_permissions_policy || 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()' }}
       cloudflare_headers_cache_html_control: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_cache_html_control || 'public, max-age=0, must-revalidate' }}
       cloudflare_headers_cache_assets_pattern: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_cache_assets_pattern || '/assets/*' }}
@@ -553,14 +566,13 @@ jobs:
       cloudflare_common_humans_txt_cache_control: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.common_humans_txt_cache_control || 'public, max-age=86400' }}
       cloudflare_headers_custom_rules: |-
         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_custom_rules || '' }}
-      cloudflare_headers_replace_existing:  ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_replace_existing == true }}
-
+      cloudflare_headers_replace_existing: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_replace_existing == true }}
       # ----- GitHub Release stage -----
-      release_template_path:  ${{ fromJson(needs.parse-config.outputs.cfg).release.template_path || '' }}
-      release_extra_context:  ${{ fromJson(needs.parse-config.outputs.cfg).release.extra_context || '' }}
+      release_template_path: ${{ fromJson(needs.parse-config.outputs.cfg).release.template_path || '' }}
+      release_extra_context: ${{ fromJson(needs.parse-config.outputs.cfg).release.extra_context || '' }}
       generate_release_notes: ${{ fromJson(needs.parse-config.outputs.cfg).release.generate_notes != false }}
-      release_files:          ${{ fromJson(needs.parse-config.outputs.cfg).release.files || '' }}
-      release_draft:          ${{ fromJson(needs.parse-config.outputs.cfg).release.draft == true }}
+      release_files: ${{ fromJson(needs.parse-config.outputs.cfg).release.files || '' }}
+      release_draft: ${{ fromJson(needs.parse-config.outputs.cfg).release.draft == true }}
 
       # ----- Shared -----
       platforms: ${{ fromJson(needs.parse-config.outputs.cfg).platforms || 'linux/amd64,linux/arm64' }}
@@ -569,98 +581,98 @@ jobs:
       use_launchpad_config: true
 
       # ----- Optional stages configured from data file -----
-      enable_security_scan:         ${{ needs.parse-config.outputs.operation == 'security_only' || fromJson(needs.parse-config.outputs.cfg).security_scan.enable != false }}
-      security_scan_fail_on:        ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.fail_on || 'fail' }}
+      enable_security_scan: ${{ needs.parse-config.outputs.operation == 'security_only' || fromJson(needs.parse-config.outputs.cfg).security_scan.enable != false }}
+      security_scan_fail_on: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.fail_on || 'fail' }}
       security_scan_blocks_release: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.blocks_release != false }}
       security_scan_enable_kit_composite: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_kit_composite != false }}
-      security_scan_enable_posture:       ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_posture != false }}
-      security_scan_enable_scanners:      ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_scanners != false }}
-      security_scan_enable_upload:        ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_upload != false }}
-      security_scan_codeql_languages:     ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_languages || '' }}
-      security_scan_codeql_queries:       ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_queries || 'security-and-quality' }}
-      security_scan_codeql_runs_on:       ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_runs_on || '' }}
-      security_scan_use_advanced_pat:     ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.use_advanced_pat == true }}
+      security_scan_enable_posture: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_posture != false }}
+      security_scan_enable_scanners: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_scanners != false }}
+      security_scan_enable_upload: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_upload != false }}
+      security_scan_codeql_languages: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_languages || '' }}
+      security_scan_codeql_queries: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_queries || 'security-and-quality' }}
+      security_scan_codeql_runs_on: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_runs_on || '' }}
+      security_scan_use_advanced_pat: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.use_advanced_pat == true }}
 
-      enable_repo_metadata:          ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.enable == true }}
-      repo_metadata_description:     ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description || '' }}
+      enable_repo_metadata: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.enable == true }}
+      repo_metadata_description: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description || '' }}
       repo_metadata_description_mode: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description_mode || 'auto' }}
       repo_metadata_description_fallback: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description_fallback || '' }}
-      repo_metadata_homepage:        ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.homepage || '' }}
-      repo_metadata_topics:          ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.topics || '' }}
+      repo_metadata_homepage: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.homepage || '' }}
+      repo_metadata_topics: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.topics || '' }}
       repo_metadata_generate_topics: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.generate_topics == true }}
       repo_metadata_topics_fallback: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.topics_fallback || '' }}
-      repo_metadata_ai_enabled:      ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_enabled != false }}
-      repo_metadata_ai_model:        ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_model || 'auto' }}
-      repo_metadata_show_releases:   ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_releases != false }}
+      repo_metadata_ai_enabled: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_enabled != false }}
+      repo_metadata_ai_model: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_model || 'auto' }}
+      repo_metadata_show_releases: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_releases != false }}
       repo_metadata_show_deployments: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_deployments == true }}
-      repo_metadata_show_packages:   ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_packages == true }}
-      repo_metadata_dry_run:         ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.dry_run == true }}
+      repo_metadata_show_packages: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_packages == true }}
+      repo_metadata_dry_run: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.dry_run == true }}
     secrets: inherit
 
   release-main:
     name: Release (main)
     needs: parse-config
     if: >-
-      needs.parse-config.outputs.target_ref == 'main'
-      && contains(fromJson('["full","release_only","security_only"]'), needs.parse-config.outputs.operation)
+      github.ref_name == 'main'
+      && (github.event_name != 'workflow_dispatch' || contains(fromJson('["full","release_only","security_only"]'), inputs.operation))
     permissions:
-      contents:        write   # monitor tracking-file commit + GitHub Release publish
-      actions:         write   # nested monitor (`gh workflow run`)
-      pull-requests:   write   # nested Docker Scout PR annotations
-      security-events: write   # nested Docker Scout SARIF upload
-      models:          read    # nested release.yml -> github-release.yml AI changelog
+      contents: write # monitor tracking-file commit + GitHub Release publish
+      actions: write # nested monitor (`gh workflow run`)
+      pull-requests: write # nested Docker Scout PR annotations
+      security-events: write # nested Docker Scout SARIF upload
+      models: read # nested release.yml -> github-release.yml AI changelog
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-gatekeeper.yml@main
     with:
-      upstream_repo:     ${{ fromJson(needs.parse-config.outputs.cfg).upstream.repo || '' }}
-      source:            ${{ fromJson(needs.parse-config.outputs.cfg).upstream.source || 'github_release' }}
-      upstream_branch:   ${{ fromJson(needs.parse-config.outputs.cfg).upstream.branch || '' }}
+      upstream_repo: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.repo || '' }}
+      source: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.source || 'github_release' }}
+      upstream_branch: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.branch || '' }}
       version_file_path: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.version_file_path || 'version' }}
-      version_regex:     ${{ fromJson(needs.parse-config.outputs.cfg).upstream.version_regex || '' }}
-      image_ref:         ${{ fromJson(needs.parse-config.outputs.cfg).upstream.image_ref || '' }}
-      package_name:      ${{ fromJson(needs.parse-config.outputs.cfg).upstream.package_name || '' }}
-      version_url:       ${{ fromJson(needs.parse-config.outputs.cfg).upstream.version_url || '' }}
-      tag_pattern:       ${{ fromJson(needs.parse-config.outputs.cfg).upstream.tag_pattern || '' }}
-      track_file:        ${{ fromJson(needs.parse-config.outputs.cfg).upstream.track_file || '.github/upstream/tracked-release.json' }}
+      version_regex: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.version_regex || '' }}
+      image_ref: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.image_ref || '' }}
+      package_name: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.package_name || '' }}
+      version_url: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.version_url || '' }}
+      tag_pattern: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.tag_pattern || '' }}
+      track_file: ${{ fromJson(needs.parse-config.outputs.cfg).upstream.track_file || '.github/upstream/tracked-release.json' }}
       force_run: ${{ needs.parse-config.outputs.force_run == 'true' }}
 
       # `run_publish` is resolved once in parse-config from the dispatch
       # operation: false for `security_only`, true for `full`/`release_only`.
-      docker:           ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.docker == true }}
-      balena:           ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.balena == true }}
-      github_release:   ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.github_release == true }}
+      docker: ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.docker == true }}
+      balena: ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.balena == true }}
+      github_release: ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.github_release == true }}
       companion_docker: ${{ needs.parse-config.outputs.run_publish == 'true' && fromJson(needs.parse-config.outputs.cfg).stages.companion_docker == true }}
 
-      image_name:                ${{ fromJson(needs.parse-config.outputs.cfg).docker.image_name || '' }}
-      dockerhub_namespace:       ${{ vars[fromJson(needs.parse-config.outputs.cfg).docker.namespace_var || 'DOCKERHUB_NAMESPACE'] }}
-      docker_extra_tags:         ${{ fromJson(needs.parse-config.outputs.cfg).docker.extra_tags || '' }}
-      docker_short_description:  ${{ fromJson(needs.parse-config.outputs.cfg).docker.short_description || '' }}
-      docker_latest:             ${{ fromJson(needs.parse-config.outputs.cfg).docker.latest != false }}
-      docker_multi_arch:         ${{ fromJson(needs.parse-config.outputs.cfg).docker.multi_arch != false }}
+      image_name: ${{ fromJson(needs.parse-config.outputs.cfg).docker.image_name || '' }}
+      dockerhub_namespace: ${{ vars[fromJson(needs.parse-config.outputs.cfg).docker.namespace_var || 'DOCKERHUB_NAMESPACE'] }}
+      docker_extra_tags: ${{ fromJson(needs.parse-config.outputs.cfg).docker.extra_tags || '' }}
+      docker_short_description: ${{ fromJson(needs.parse-config.outputs.cfg).docker.short_description || '' }}
+      docker_latest: ${{ fromJson(needs.parse-config.outputs.cfg).docker.latest != false }}
+      docker_multi_arch: ${{ fromJson(needs.parse-config.outputs.cfg).docker.multi_arch != false }}
       docker_update_description: ${{ fromJson(needs.parse-config.outputs.cfg).docker.update_description != false }}
       docker_force: ${{ needs.parse-config.outputs.force_run == 'true' }}
 
       # ----- Docker Scout -----
-      docker_enable_scout:             ${{ fromJson(needs.parse-config.outputs.cfg).scout.enable != false }}
-      docker_scout_command:            ${{ fromJson(needs.parse-config.outputs.cfg).scout.command || 'cves' }}
-      docker_scout_severities:         ${{ fromJson(needs.parse-config.outputs.cfg).scout.severities || 'critical,high' }}
-      docker_scout_only_fixed:         ${{ fromJson(needs.parse-config.outputs.cfg).scout.only_fixed == true }}
-      docker_scout_ignore_base:        ${{ fromJson(needs.parse-config.outputs.cfg).scout.ignore_base == true }}
-      docker_scout_organization:       ${{ fromJson(needs.parse-config.outputs.cfg).scout.organization || '' }}
+      docker_enable_scout: ${{ fromJson(needs.parse-config.outputs.cfg).scout.enable != false }}
+      docker_scout_command: ${{ fromJson(needs.parse-config.outputs.cfg).scout.command || 'cves' }}
+      docker_scout_severities: ${{ fromJson(needs.parse-config.outputs.cfg).scout.severities || 'critical,high' }}
+      docker_scout_only_fixed: ${{ fromJson(needs.parse-config.outputs.cfg).scout.only_fixed == true }}
+      docker_scout_ignore_base: ${{ fromJson(needs.parse-config.outputs.cfg).scout.ignore_base == true }}
+      docker_scout_organization: ${{ fromJson(needs.parse-config.outputs.cfg).scout.organization || '' }}
       docker_scout_record_environment: ${{ fromJson(needs.parse-config.outputs.cfg).scout.record_environment || '' }}
-      docker_scout_sarif_upload:       ${{ fromJson(needs.parse-config.outputs.cfg).scout.sarif_upload != false }}
-      docker_scout_exit_code:          ${{ fromJson(needs.parse-config.outputs.cfg).scout.exit_code == true }}
-      docker_scout_enable_repo:        ${{ fromJson(needs.parse-config.outputs.cfg).scout.enable_repo != false }}
+      docker_scout_sarif_upload: ${{ fromJson(needs.parse-config.outputs.cfg).scout.sarif_upload != false }}
+      docker_scout_exit_code: ${{ fromJson(needs.parse-config.outputs.cfg).scout.exit_code == true }}
+      docker_scout_enable_repo: ${{ fromJson(needs.parse-config.outputs.cfg).scout.enable_repo != false }}
 
       # ----- Balena stage -----
-      block_name:                 ${{ fromJson(needs.parse-config.outputs.cfg).balena.block_name || '' }}
-      balena_namespace:           ${{ vars[fromJson(needs.parse-config.outputs.cfg).balena.namespace_var || 'BALENA_NAMESPACE'] }}
-      balena_sync_yml:            ${{ fromJson(needs.parse-config.outputs.cfg).balena.sync_yml != false }}
-      balena_draft:               ${{ fromJson(needs.parse-config.outputs.cfg).balena.draft == true }}
+      block_name: ${{ fromJson(needs.parse-config.outputs.cfg).balena.block_name || '' }}
+      balena_namespace: ${{ vars[fromJson(needs.parse-config.outputs.cfg).balena.namespace_var || 'BALENA_NAMESPACE'] }}
+      balena_sync_yml: ${{ fromJson(needs.parse-config.outputs.cfg).balena.sync_yml != false }}
+      balena_draft: ${{ fromJson(needs.parse-config.outputs.cfg).balena.draft == true }}
       balena_force: ${{ needs.parse-config.outputs.force_run == 'true' }}
-      balena_generate_yml:        ${{ fromJson(needs.parse-config.outputs.cfg).balena.generate_yml == true }}
-      balena_type:                ${{ fromJson(needs.parse-config.outputs.cfg).balena.type || 'sw.block' }}
-      balena_repository_url:      ${{ fromJson(needs.parse-config.outputs.cfg).balena.repository_url || '' }}
-      balena_logo_url:            ${{ fromJson(needs.parse-config.outputs.cfg).balena.logo_url || '' }}
+      balena_generate_yml: ${{ fromJson(needs.parse-config.outputs.cfg).balena.generate_yml == true }}
+      balena_type: ${{ fromJson(needs.parse-config.outputs.cfg).balena.type || 'sw.block' }}
+      balena_repository_url: ${{ fromJson(needs.parse-config.outputs.cfg).balena.repository_url || '' }}
+      balena_logo_url: ${{ fromJson(needs.parse-config.outputs.cfg).balena.logo_url || '' }}
       balena_default_device_type: ${{ fromJson(needs.parse-config.outputs.cfg).balena.default_device_type || '' }}
       # `|-` chomps the trailing newline that a plain `|` block would
       # add at each forwarding hop, so multi-line caller values stay
@@ -673,65 +685,64 @@ jobs:
         ${{ fromJson(needs.parse-config.outputs.cfg).balena.supported_device_types || '' }}
 
       # ----- Companion Docker stage -----
-      companion_image_name:               ${{ fromJson(needs.parse-config.outputs.cfg).companion_docker.image_name || '' }}
-      companion_build_target:             ${{ fromJson(needs.parse-config.outputs.cfg).companion_docker.build_target || '' }}
+      companion_image_name: ${{ fromJson(needs.parse-config.outputs.cfg).companion_docker.image_name || '' }}
+      companion_build_target: ${{ fromJson(needs.parse-config.outputs.cfg).companion_docker.build_target || '' }}
       companion_docker_short_description: ${{ fromJson(needs.parse-config.outputs.cfg).companion_docker.short_description || '' }}
 
       # ----- Cloudflare Pages stage -----
-      cloudflare_pages:                     ${{ needs.parse-config.outputs.operation != 'security_only' && fromJson(needs.parse-config.outputs.cfg).stages.cloudflare_pages == true }}
-      cloudflare_project_name:              ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.project_name || '' }}
-      cloudflare_deployment_environment:    ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deployment_environment || '' }}
-      cloudflare_site_url:                  ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.site_url || '' }}
-      cloudflare_public_dir:                ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.public_dir || '.' }}
-      cloudflare_deploy_dir:                ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy_dir || './dist' }}
-      cloudflare_clean_deploy_dir:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.clean_deploy_dir != false }}
+      cloudflare_pages: ${{ needs.parse-config.outputs.operation != 'security_only' && fromJson(needs.parse-config.outputs.cfg).stages.cloudflare_pages == true }}
+      cloudflare_project_name: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.project_name || '' }}
+      cloudflare_deployment_environment: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deployment_environment || '' }}
+      cloudflare_site_url: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.site_url || '' }}
+      cloudflare_public_dir: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.public_dir || '.' }}
+      cloudflare_deploy_dir: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy_dir || './dist' }}
+      cloudflare_clean_deploy_dir: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.clean_deploy_dir != false }}
       cloudflare_copy_files: |-
         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.copy_files || '' }}
       cloudflare_copy_dirs: |-
         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.copy_dirs || '' }}
-      cloudflare_prebuild_command:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.prebuild_command || '' }}
-      cloudflare_working_directory:         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.working_directory || '' }}
-      cloudflare_branch:                    ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.branch || '' }}
-      cloudflare_commit_message:            ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.commit_message || '' }}
-      cloudflare_wrangler_version:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.wrangler_version || '' }}
-      cloudflare_extra_wrangler_args:       ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.extra_wrangler_args || '' }}
-      cloudflare_ai_bindings:               ${{ toJson(fromJson(needs.parse-config.outputs.cfg).cloudflare.ai_bindings || fromJson('[]')) }}
-      cloudflare_deploy_artifact_name:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy_artifact_name || '' }}
-      cloudflare_deploy:                    ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy || '' }}
-      cloudflare_runs_on:                   ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.runs_on || '' }}
-      cloudflare_checkout_fetch_depth:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.checkout_fetch_depth || 0 }}
-      cloudflare_purge_cache:               ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.purge_cache != false }}
+      cloudflare_prebuild_command: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.prebuild_command || '' }}
+      cloudflare_working_directory: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.working_directory || '' }}
+      cloudflare_branch: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.branch || '' }}
+      cloudflare_commit_message: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.commit_message || '' }}
+      cloudflare_wrangler_version: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.wrangler_version || '' }}
+      cloudflare_extra_wrangler_args: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.extra_wrangler_args || '' }}
+      cloudflare_ai_bindings: ${{ toJson(fromJson(needs.parse-config.outputs.cfg).cloudflare.ai_bindings || fromJson('[]')) }}
+      cloudflare_deploy_artifact_name: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy_artifact_name || '' }}
+      cloudflare_deploy: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.deploy || '' }}
+      cloudflare_runs_on: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.runs_on || '' }}
+      cloudflare_checkout_fetch_depth: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.checkout_fetch_depth || 0 }}
+      cloudflare_purge_cache: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.purge_cache != false }}
 
       # ----- Cloudflare generators -----
-      cloudflare_generate_sitemap:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_sitemap == true }}
-      cloudflare_generate_robots:           ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_robots == true }}
-      cloudflare_generate_security_txt:     ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_security_txt == true }}
-      cloudflare_generate_humans_txt:       ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_humans_txt == true }}
-      cloudflare_security_contact:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.security_contact || '' }}
-      cloudflare_generator_audit:           ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generator_audit == true }}
-      cloudflare_generator_audit_fail_on:   ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generator_audit_fail_on || 'never' }}
+      cloudflare_generate_sitemap: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_sitemap == true }}
+      cloudflare_generate_robots: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_robots == true }}
+      cloudflare_generate_security_txt: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_security_txt == true }}
+      cloudflare_generate_humans_txt: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_humans_txt == true }}
+      cloudflare_security_contact: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.security_contact || '' }}
+      cloudflare_generator_audit: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generator_audit == true }}
+      cloudflare_generator_audit_fail_on: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generator_audit_fail_on || 'never' }}
       cloudflare_generator_audit_artifact_name: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generator_audit_artifact_name || 'site-compliance-reports' }}
-      cloudflare_generate_manifest:         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_manifest == true }}
-      cloudflare_manifest_name:             ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_name || '' }}
-      cloudflare_manifest_short_name:       ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_short_name || '' }}
-      cloudflare_manifest_description:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_description || '' }}
-      cloudflare_manifest_orientation:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_orientation || '' }}
-      cloudflare_manifest_theme_color:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_theme_color || '' }}
+      cloudflare_generate_manifest: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_manifest == true }}
+      cloudflare_manifest_name: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_name || '' }}
+      cloudflare_manifest_short_name: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_short_name || '' }}
+      cloudflare_manifest_description: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_description || '' }}
+      cloudflare_manifest_orientation: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_orientation || '' }}
+      cloudflare_manifest_theme_color: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_theme_color || '' }}
       cloudflare_manifest_background_color: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_background_color || '' }}
-      cloudflare_manifest_lang:             ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_lang || '' }}
-      cloudflare_manifest_dir:              ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_dir || '' }}
-      cloudflare_manifest_categories:       ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_categories || '' }}
-      cloudflare_manifest_icons_dir:        ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_icons_dir || '' }}
-      cloudflare_generate_redirects:        ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_redirects == true }}
+      cloudflare_manifest_lang: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_lang || '' }}
+      cloudflare_manifest_dir: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_dir || '' }}
+      cloudflare_manifest_categories: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_categories || '' }}
+      cloudflare_manifest_icons_dir: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.manifest_icons_dir || '' }}
+      cloudflare_generate_redirects: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_redirects == true }}
       cloudflare_redirects_custom_rules: |-
         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.redirects_custom_rules || '' }}
       cloudflare_redirects_replace_existing: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.redirects_replace_existing == true }}
-
       # ----- Cloudflare headers generator -----
-      cloudflare_generate_headers:          ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_headers == true }}
-      cloudflare_headers_presets:           ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_presets || 'security,cache' }}
-      cloudflare_headers_csp:               ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_csp || '' }}
-      cloudflare_headers_hsts_max_age:      ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_hsts_max_age || '63072000' }}
+      cloudflare_generate_headers: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.generate_headers == true }}
+      cloudflare_headers_presets: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_presets || 'security,cache' }}
+      cloudflare_headers_csp: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_csp || '' }}
+      cloudflare_headers_hsts_max_age: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_hsts_max_age || '63072000' }}
       cloudflare_headers_permissions_policy: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_permissions_policy || 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()' }}
       cloudflare_headers_cache_html_control: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_cache_html_control || 'public, max-age=0, must-revalidate' }}
       cloudflare_headers_cache_assets_pattern: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_cache_assets_pattern || '/assets/*' }}
@@ -743,14 +754,13 @@ jobs:
       cloudflare_common_humans_txt_cache_control: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.common_humans_txt_cache_control || 'public, max-age=86400' }}
       cloudflare_headers_custom_rules: |-
         ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_custom_rules || '' }}
-      cloudflare_headers_replace_existing:  ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_replace_existing == true }}
-
+      cloudflare_headers_replace_existing: ${{ fromJson(needs.parse-config.outputs.cfg).cloudflare.headers_replace_existing == true }}
       # ----- GitHub Release stage -----
-      release_template_path:  ${{ fromJson(needs.parse-config.outputs.cfg).release.template_path || '' }}
-      release_extra_context:  ${{ fromJson(needs.parse-config.outputs.cfg).release.extra_context || '' }}
+      release_template_path: ${{ fromJson(needs.parse-config.outputs.cfg).release.template_path || '' }}
+      release_extra_context: ${{ fromJson(needs.parse-config.outputs.cfg).release.extra_context || '' }}
       generate_release_notes: ${{ fromJson(needs.parse-config.outputs.cfg).release.generate_notes != false }}
-      release_files:          ${{ fromJson(needs.parse-config.outputs.cfg).release.files || '' }}
-      release_draft:          ${{ fromJson(needs.parse-config.outputs.cfg).release.draft == true }}
+      release_files: ${{ fromJson(needs.parse-config.outputs.cfg).release.files || '' }}
+      release_draft: ${{ fromJson(needs.parse-config.outputs.cfg).release.draft == true }}
 
       # ----- Shared -----
       platforms: ${{ fromJson(needs.parse-config.outputs.cfg).platforms || 'linux/amd64,linux/arm64' }}
@@ -759,28 +769,28 @@ jobs:
       use_launchpad_config: true
 
       # ----- Optional stages configured from data file -----
-      enable_security_scan:         ${{ needs.parse-config.outputs.operation == 'security_only' || fromJson(needs.parse-config.outputs.cfg).security_scan.enable != false }}
-      security_scan_fail_on:        ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.fail_on || 'fail' }}
+      enable_security_scan: ${{ needs.parse-config.outputs.operation == 'security_only' || fromJson(needs.parse-config.outputs.cfg).security_scan.enable != false }}
+      security_scan_fail_on: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.fail_on || 'fail' }}
       security_scan_blocks_release: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.blocks_release != false }}
       security_scan_enable_kit_composite: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_kit_composite != false }}
-      security_scan_enable_posture:       ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_posture != false }}
-      security_scan_enable_scanners:      ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_scanners != false }}
-      security_scan_enable_upload:        ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_upload != false }}
-      security_scan_codeql_languages:     ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_languages || '' }}
-      security_scan_codeql_queries:       ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_queries || 'security-and-quality' }}
-      security_scan_codeql_runs_on:       ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_runs_on || '' }}
-      security_scan_use_advanced_pat:     ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.use_advanced_pat == true }}
+      security_scan_enable_posture: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_posture != false }}
+      security_scan_enable_scanners: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_scanners != false }}
+      security_scan_enable_upload: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_upload != false }}
+      security_scan_codeql_languages: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_languages || '' }}
+      security_scan_codeql_queries: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_queries || 'security-and-quality' }}
+      security_scan_codeql_runs_on: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_runs_on || '' }}
+      security_scan_use_advanced_pat: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.use_advanced_pat == true }}
 
-      enable_repo_metadata:          ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.enable == true }}
-      repo_metadata_description:     ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description || '' }}
-      repo_metadata_homepage:        ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.homepage || '' }}
-      repo_metadata_topics:          ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.topics || '' }}
+      enable_repo_metadata: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.enable == true }}
+      repo_metadata_description: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description || '' }}
+      repo_metadata_homepage: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.homepage || '' }}
+      repo_metadata_topics: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.topics || '' }}
       repo_metadata_generate_topics: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.generate_topics == true }}
       repo_metadata_topics_fallback: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.topics_fallback || '' }}
-      repo_metadata_ai_enabled:      ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_enabled != false }}
-      repo_metadata_ai_model:        ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_model || 'auto' }}
-      repo_metadata_show_releases:   ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_releases != false }}
+      repo_metadata_ai_enabled: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_enabled != false }}
+      repo_metadata_ai_model: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.ai_model || 'auto' }}
+      repo_metadata_show_releases: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_releases != false }}
       repo_metadata_show_deployments: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_deployments == true }}
-      repo_metadata_show_packages:   ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_packages == true }}
-      repo_metadata_dry_run:         ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.dry_run == true }}
+      repo_metadata_show_packages: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_packages == true }}
+      repo_metadata_dry_run: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.dry_run == true }}
     secrets: inherit
