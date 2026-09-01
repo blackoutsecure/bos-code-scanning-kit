@@ -9,16 +9,15 @@
 #   * `fail_on: never` lets findings surface as a SARIF upload to
 #     Code Scanning without blocking the workflow during the first
 #     few cycles. Flip to `fail` once the baseline is clean.
-#   * The matrix covers BOTH `vars.RUNNER_X64` and `vars.RUNNER_ARM64`
+#   * The matrix covers BOTH GitHub-hosted x64 and arm64 runners
 #     so we validate the RUNNER_ARCH branching baked into the scanner
 #     downloads (added in the Phase 4 refactor). Without two arches,
 #     an arm64 regression would only be caught by a downstream
-#     consumer. Each leg uses the org's preferred per-arch runner —
-#     bare GitHub-hosted labels (`ubuntu-latest`, `ubuntu-24.04-arm`)
-#     or JSON-array self-hosted labels both work, normalised by the
-#     same resolver expression used everywhere else (see hub README,
-#     "Runner resolution"). Both vars are validated by
-#     `preflight-runner-config` before the matrix is consumed.
+#     consumer. Dedicated hosted labels keep this required producer
+#     check independent of optional self-hosted runner availability.
+#   * Push and pull-request runs remain direct tests of the triggering
+#     commit. Manual dispatch is authorized by the read-only Gatekeeper
+#     App before the Gatewall credential can be used.
 #
 # Lives on `dev` only — never promoted (Marketplace publishing
 # prohibits workflows on the default branch).
@@ -39,14 +38,13 @@ name: Self-scan · dogfood action against own repo
         options: ["never", "fail"]
       advanced_scanning:
         description: >-
-          Force advanced posture probes (PS001/PS002/PS003) on or off. Leave
-          unchecked to auto-enable when `SCANNING_PAT` is present; otherwise
-          they stay off. Force-enable fails with `require_pat` when absent.
+          Force advanced posture probes on or off. Leave unchecked to
+          auto-enable when the Gatewall App is configured.
         required: false
         type: boolean
         default: false
       require_pat:
-        description: "Fail if advanced scanning is requested but SCANNING_PAT is not set. Useful for verifying the PAT secret is actually present (instead of silently falling back to GITHUB_TOKEN)."
+        description: "Fail if advanced scanning is requested but the Gatewall App token is unavailable. Retained under its legacy input name for dispatch compatibility."
         required: false
         type: boolean
         default: false
@@ -66,61 +64,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Preflight — validate `vars.RUNNER_X64` AND `vars.RUNNER_ARM64` once
-  # before the matrix is expanded. Fails fast with a clear annotation
-  # when either is missing or malformed, instead of leaving jobs queued
-  # indefinitely against an unmatched label. Runs on `ubuntu-latest`
-  # because the validator must run on a runner that is always present.
-  # `vars.DEFAULT_RUNNER` is NOT required here — this workflow is
-  # arch-pinned by design (cross-arch regression coverage).
-  # See `blackoutsecure/bos-automation-hub` README ("Runner resolution")
-  # for the org-wide convention this mirrors.
-  # ---------------------------------------------------------------------------
-  preflight-runner-config:
-    name: Preflight (runner config)
+  authorize:
+    name: Authorize manual dispatch
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
+    permissions:
+      contents: read
     steps:
-      - uses: blackoutsecure/bos-automation-hub/.github/actions/shared/preflight-runner-config@main
+      - name: Mint authorization token
+        id: authz-token
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          # Forward all three vars even though this workflow is arch-pinned
-          # and never consumes DEFAULT_RUNNER. Composite actions cannot read
-          # `vars.*` directly, so omitting it would print a misleading
-          # "empty (not required)" line in the preflight log when the org
-          # actually has DEFAULT_RUNNER set. See the action's own docs
-          # ("Convention: callers should forward all three runner vars").
-          default_runner: ${{ vars.DEFAULT_RUNNER }}
-          runner_x64: ${{ vars.RUNNER_X64 }}
-          runner_arm64: ${{ vars.RUNNER_ARM64 }}
-          require_default_runner: "false"
-          require_runner_x64: "true"
-          require_runner_arm64: "true"
+          app-id: ${{ vars.GATEKEEPER_APP_ID }}
+          private-key: ${{ secrets.GATEKEEPER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-members: read
+
+      - name: Check dispatcher authorization
+        uses: blackoutsecure/bos-workflow-gatekeeper@eae1fdd8ab731e72bf890fdb7c1504415d12d88c # v1.0.2
+        with:
+          actor: ${{ github.triggering_actor || github.actor }}
+          organization: ${{ github.repository_owner }}
+          repository: ${{ github.repository }}
+          event_name: ${{ github.event_name }}
+          allow_org_admin: true
+          fail_closed: true
+          token: ${{ steps.authz-token.outputs.token }}
 
   self-scan:
     name: Self-scan (${{ matrix.arch }})
-    needs: preflight-runner-config
-    # Resolves the matrix-supplied runner var (bare label or JSON-array
-    # string). Both presence and shape are enforced by
-    # `preflight-runner-config`, so this expression has no fallback —
-    # see the hub's README ("Runner resolution") for the full rationale.
-    runs-on: ${{ fromJSON(startsWith(matrix.runner, '[') && matrix.runner || format('"{0}"', matrix.runner)) }}
+    needs: authorize
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        # `${{ vars.* }}` is substituted at workflow-start (before matrix
-        # expansion), so each leg carries a concrete runner spec string
-        # by the time the resolver above evaluates it.
         include:
           - arch: x64
-            runner: ${{ vars.RUNNER_X64 }}
+            runner: ubuntu-latest
           - arch: arm64
-            runner: ${{ vars.RUNNER_ARM64 }}
+            runner: ubuntu-24.04-arm
     steps:
       - name: Mint security audit token
         id: security-app
-        if: vars.GATEWALL_APP_ID != ''
+        if: github.event_name != 'pull_request' && vars.GATEWALL_APP_ID != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.GATEWALL_APP_ID }}
@@ -145,7 +133,6 @@ jobs:
           VAR_ADVANCED: ${{ vars['BOS_SCAN_ADVANCED'] }}
           VAR_REQUIRE_PAT: ${{ vars['BOS_SCAN_REQUIRE_PAT'] }}
           HAS_APP: ${{ steps.security-app.outputs.token != '' && 'true' || 'false' }}
-          HAS_PAT: ${{ secrets['SCANNING_PAT'] != '' && 'true' || 'false' }}
         run: |
           set -euo pipefail
 
@@ -156,12 +143,12 @@ jobs:
             esac
           }
 
-          # Dogfood auto-enable: when SCANNING_PAT is present at the
-          # repo/org level, the kit's own self-scan ALWAYS exercises
+          # Dogfood auto-enable: when Gatewall is present, the kit's own
+          # trusted push/manual self-scan ALWAYS exercises
           # the advanced posture path (PS001 code-scanning default-
           # setup, PS002 secret-scanning enablement, PS003 Dependabot
           # alerts enablement). This is the canonical end-to-end test
-          # for the SCANNING_PAT wiring — if the kit can't probe its
+          # for the Gatewall wiring — if the kit can't probe its
           # own GHAS settings cleanly, consumers won't either. Explicit
           # dispatch input / repo var still override (e.g. to force a
           # fallback-path test by passing `advanced_scanning: false`).
@@ -170,7 +157,7 @@ jobs:
             advanced_requested=true
           elif is_true "${VAR_ADVANCED}"; then
             advanced_requested=true
-          elif [ "${HAS_APP}" = "true" ] || [ "${HAS_PAT}" = "true" ]; then
+          elif [ "${HAS_APP}" = "true" ]; then
             advanced_requested=true
           fi
 
@@ -181,22 +168,16 @@ jobs:
             require_pat=true
           fi
 
-          use_pat=false
-          if [ "${advanced_requested}" = "true" ] && { [ "${HAS_APP}" = "true" ] || [ "${HAS_PAT}" = "true" ]; }; then
-            use_pat=true
-          fi
-
-          if [ "${advanced_requested}" = "true" ] && [ "${HAS_APP}" != "true" ] && [ "${HAS_PAT}" != "true" ] && [ "${require_pat}" = "true" ]; then
-            echo "::error::Advanced scanning was requested, but no security-audit App token or legacy PAT is configured."
+          if [ "${advanced_requested}" = "true" ] && [ "${HAS_APP}" != "true" ] && [ "${require_pat}" = "true" ]; then
+            echo "::error::Advanced scanning was requested, but the Gatewall App token is unavailable."
             exit 1
           fi
 
-          if [ "${advanced_requested}" = "true" ] && [ "${HAS_APP}" != "true" ] && [ "${HAS_PAT}" != "true" ]; then
+          if [ "${advanced_requested}" = "true" ] && [ "${HAS_APP}" != "true" ]; then
             echo "::warning::Advanced scanning requested without a security-audit App token. Falling back to GITHUB_TOKEN."
           fi
 
           echo "advanced_requested=${advanced_requested}" >> "${GITHUB_OUTPUT}"
-          echo "use_pat=${use_pat}" >> "${GITHUB_OUTPUT}"
       - id: scan
         uses: ./
         with:
@@ -205,7 +186,7 @@ jobs:
           enable_upload: "true"
           fail_on: ${{ inputs.fail_on || 'never' }}
           http_timeout: ${{ inputs.http_timeout || '20' }}
-          github_token: ${{ steps.security-app.outputs.token || (steps.mode.outputs.use_pat == 'true' && secrets['SCANNING_PAT'] || github.token) }}
+          github_token: ${{ steps.security-app.outputs.token || github.token }}
       - name: Show outputs
         if: always()
         env:
