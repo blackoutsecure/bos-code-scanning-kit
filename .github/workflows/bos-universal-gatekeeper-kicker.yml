@@ -426,7 +426,7 @@ jobs:
     needs: parse-config
     if: >-
       github.ref_name == 'dev'
-      && (github.event_name != 'workflow_dispatch' || contains(fromJson('["full","release_only","security_only"]'), inputs.operation))
+      && (github.event_name != 'workflow_dispatch' || inputs.operation == 'full' || inputs.operation == 'release_only' || inputs.operation == 'security_only')
     permissions:
       contents: write # monitor tracking-file commit + GitHub Release publish
       actions: write # nested monitor (`gh workflow run`)
@@ -614,7 +614,7 @@ jobs:
     needs: parse-config
     if: >-
       github.ref_name == 'main'
-      && (github.event_name != 'workflow_dispatch' || contains(fromJson('["full","release_only","security_only"]'), inputs.operation))
+      && (github.event_name != 'workflow_dispatch' || inputs.operation == 'full' || inputs.operation == 'release_only' || inputs.operation == 'security_only')
     permissions:
       contents: write # monitor tracking-file commit + GitHub Release publish
       actions: write # nested monitor (`gh workflow run`)
@@ -794,3 +794,51 @@ jobs:
       repo_metadata_show_packages: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.show_packages == true }}
       repo_metadata_dry_run: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.dry_run == true }}
     secrets: inherit
+
+  route-verdict:
+    name: Dispatch route verdict
+    needs:
+      - parse-config
+      - action-test
+      - metadata
+      - marketplace-validate
+      - marketplace-release
+      - release-dev
+      - release-main
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify selected route executed
+        env:
+          OPERATION: ${{ inputs.operation }}
+          TARGET_REF: ${{ github.ref_name }}
+          PARSE_RESULT: ${{ needs.parse-config.result }}
+          ACTION_TEST_RESULT: ${{ needs.action-test.result }}
+          METADATA_RESULT: ${{ needs.metadata.result }}
+          MARKETPLACE_VALIDATE_RESULT: ${{ needs.marketplace-validate.result }}
+          MARKETPLACE_RELEASE_RESULT: ${{ needs.marketplace-release.result }}
+          RELEASE_DEV_RESULT: ${{ needs.release-dev.result }}
+          RELEASE_MAIN_RESULT: ${{ needs.release-main.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "${PARSE_RESULT}" = "success" ] || { echo "::error::Config parsing did not succeed."; exit 1; }
+          case "${OPERATION}" in
+            full|release_only|security_only)
+              expected="${RELEASE_MAIN_RESULT}"
+              [ "${TARGET_REF}" = "dev" ] && expected="${RELEASE_DEV_RESULT}"
+              ;;
+            action_test) expected="${ACTION_TEST_RESULT}" ;;
+            metadata) expected="${METADATA_RESULT}" ;;
+            marketplace_validate) expected="${MARKETPLACE_VALIDATE_RESULT}" ;;
+            marketplace_release) expected="${MARKETPLACE_RELEASE_RESULT}" ;;
+            sync_only) expected="success" ;;
+            *) echo "::error::Unknown operation '${OPERATION}'."; exit 1 ;;
+          esac
+          if [ "${expected}" = "skipped" ]; then
+            echo "::error title=Dispatch route skipped::Operation '${OPERATION}' did not execute its owning job."
+            exit 1
+          fi
+          [ "${expected}" = "success" ] || { echo "::error::Selected route completed with '${expected}'."; exit 1; }
+          echo "::notice title=Dispatch route complete::Operation '${OPERATION}' executed successfully."
