@@ -586,15 +586,15 @@ jobs:
       # ----- Optional stages configured from data file -----
       enable_security_scan: ${{ needs.parse-config.outputs.run_security == 'true' || fromJson(needs.parse-config.outputs.cfg).security_scan.enable == true }}
       security_scan_fail_on: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.fail_on || 'fail' }}
-      security_scan_blocks_release: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.blocks_release != false }}
-      security_scan_enable_kit_composite: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_kit_composite != false }}
-      security_scan_enable_posture: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_posture != false }}
-      security_scan_enable_scanners: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_scanners != false }}
-      security_scan_enable_upload: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_upload != false }}
+      security_scan_blocks_release: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.blocks_release) != 'false' }}
+      security_scan_enable_kit_composite: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.enable_kit_composite) != 'false' }}
+      security_scan_enable_posture: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.enable_posture) != 'false' }}
+      security_scan_enable_scanners: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.enable_scanners) != 'false' }}
+      security_scan_enable_upload: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.enable_upload) != 'false' }}
       security_scan_codeql_languages: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_languages || '' }}
       security_scan_codeql_queries: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_queries || 'security-and-quality' }}
       security_scan_codeql_runs_on: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_runs_on || '' }}
-      security_scan_use_advanced_pat: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.use_advanced_pat == true }}
+      security_scan_use_advanced_pat: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.use_advanced_pat) != 'false' }}
 
       enable_repo_metadata: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.enable == true }}
       repo_metadata_description: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description || '' }}
@@ -777,15 +777,15 @@ jobs:
       # ----- Optional stages configured from data file -----
       enable_security_scan: ${{ needs.parse-config.outputs.run_security == 'true' || fromJson(needs.parse-config.outputs.cfg).security_scan.enable == true }}
       security_scan_fail_on: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.fail_on || 'fail' }}
-      security_scan_blocks_release: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.blocks_release != false }}
-      security_scan_enable_kit_composite: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_kit_composite != false }}
-      security_scan_enable_posture: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_posture != false }}
-      security_scan_enable_scanners: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_scanners != false }}
-      security_scan_enable_upload: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_upload != false }}
+      security_scan_blocks_release: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.blocks_release) != 'false' }}
+      security_scan_enable_kit_composite: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.enable_kit_composite) != 'false' }}
+      security_scan_enable_posture: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.enable_posture) != 'false' }}
+      security_scan_enable_scanners: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.enable_scanners) != 'false' }}
+      security_scan_enable_upload: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.enable_upload) != 'false' }}
       security_scan_codeql_languages: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_languages || '' }}
       security_scan_codeql_queries: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_queries || 'security-and-quality' }}
       security_scan_codeql_runs_on: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.codeql_runs_on || '' }}
-      security_scan_use_advanced_pat: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.use_advanced_pat == true }}
+      security_scan_use_advanced_pat: ${{ toJSON(fromJson(needs.parse-config.outputs.cfg).security_scan.use_advanced_pat) != 'false' }}
 
       enable_repo_metadata: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.enable == true }}
       repo_metadata_description: ${{ fromJson(needs.parse-config.outputs.cfg).repo_metadata.description || '' }}
