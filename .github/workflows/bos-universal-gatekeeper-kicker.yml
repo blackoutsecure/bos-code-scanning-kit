@@ -584,7 +584,7 @@ jobs:
       use_launchpad_config: true
 
       # ----- Optional stages configured from data file -----
-      enable_security_scan: ${{ needs.parse-config.outputs.operation == 'security_only' || fromJson(needs.parse-config.outputs.cfg).security_scan.enable != false }}
+      enable_security_scan: ${{ needs.parse-config.outputs.run_security == 'true' || fromJson(needs.parse-config.outputs.cfg).security_scan.enable == true }}
       security_scan_fail_on: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.fail_on || 'fail' }}
       security_scan_blocks_release: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.blocks_release != false }}
       security_scan_enable_kit_composite: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_kit_composite != false }}
@@ -775,7 +775,7 @@ jobs:
       use_launchpad_config: true
 
       # ----- Optional stages configured from data file -----
-      enable_security_scan: ${{ needs.parse-config.outputs.operation == 'security_only' || fromJson(needs.parse-config.outputs.cfg).security_scan.enable != false }}
+      enable_security_scan: ${{ needs.parse-config.outputs.run_security == 'true' || fromJson(needs.parse-config.outputs.cfg).security_scan.enable == true }}
       security_scan_fail_on: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.fail_on || 'fail' }}
       security_scan_blocks_release: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.blocks_release != false }}
       security_scan_enable_kit_composite: ${{ fromJson(needs.parse-config.outputs.cfg).security_scan.enable_kit_composite != false }}
