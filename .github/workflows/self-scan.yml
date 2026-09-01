@@ -118,6 +118,22 @@ jobs:
           - arch: arm64
             runner: ${{ vars.RUNNER_ARM64 }}
     steps:
+      - name: Mint security audit token
+        id: security-app
+        if: vars.SECURITY_AUDIT_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.SECURITY_AUDIT_APP_ID }}
+          private-key: ${{ secrets.SECURITY_AUDIT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
+          permission-administration: read
+          permission-contents: read
+          permission-secret-scanning-alerts: read
+          permission-security-events: write
+          permission-vulnerability-alerts: read
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -128,6 +144,7 @@ jobs:
           INPUT_REQUIRE_PAT: ${{ github.event_name == 'workflow_dispatch' && inputs.require_pat && 'true' || '' }}
           VAR_ADVANCED: ${{ vars['BOS_SCAN_ADVANCED'] }}
           VAR_REQUIRE_PAT: ${{ vars['BOS_SCAN_REQUIRE_PAT'] }}
+          HAS_APP: ${{ steps.security-app.outputs.token != '' && 'true' || 'false' }}
           HAS_PAT: ${{ secrets['SCANNING_PAT'] != '' && 'true' || 'false' }}
         run: |
           set -euo pipefail
@@ -153,7 +170,7 @@ jobs:
             advanced_requested=true
           elif is_true "${VAR_ADVANCED}"; then
             advanced_requested=true
-          elif [ "${HAS_PAT}" = "true" ]; then
+          elif [ "${HAS_APP}" = "true" ] || [ "${HAS_PAT}" = "true" ]; then
             advanced_requested=true
           fi
 
@@ -165,17 +182,17 @@ jobs:
           fi
 
           use_pat=false
-          if [ "${advanced_requested}" = "true" ] && [ "${HAS_PAT}" = "true" ]; then
+          if [ "${advanced_requested}" = "true" ] && { [ "${HAS_APP}" = "true" ] || [ "${HAS_PAT}" = "true" ]; }; then
             use_pat=true
           fi
 
-          if [ "${advanced_requested}" = "true" ] && [ "${HAS_PAT}" != "true" ] && [ "${require_pat}" = "true" ]; then
-            echo "::error::Advanced scanning was requested, but secret SCANNING_PAT is not configured."
+          if [ "${advanced_requested}" = "true" ] && [ "${HAS_APP}" != "true" ] && [ "${HAS_PAT}" != "true" ] && [ "${require_pat}" = "true" ]; then
+            echo "::error::Advanced scanning was requested, but no security-audit App token or legacy PAT is configured."
             exit 1
           fi
 
-          if [ "${advanced_requested}" = "true" ] && [ "${HAS_PAT}" != "true" ]; then
-            echo "::warning::Advanced scanning requested but SCANNING_PAT is missing. Falling back to GITHUB_TOKEN (PS002/PS003 will be skipped)."
+          if [ "${advanced_requested}" = "true" ] && [ "${HAS_APP}" != "true" ] && [ "${HAS_PAT}" != "true" ]; then
+            echo "::warning::Advanced scanning requested without a security-audit App token. Falling back to GITHUB_TOKEN."
           fi
 
           echo "advanced_requested=${advanced_requested}" >> "${GITHUB_OUTPUT}"
@@ -188,7 +205,7 @@ jobs:
           enable_upload: 'true'
           fail_on: ${{ inputs.fail_on || 'never' }}
           http_timeout: ${{ inputs.http_timeout || '20' }}
-          github_token: ${{ steps.mode.outputs.use_pat == 'true' && secrets['SCANNING_PAT'] || github.token }}
+          github_token: ${{ steps.security-app.outputs.token || (steps.mode.outputs.use_pat == 'true' && secrets['SCANNING_PAT'] || github.token) }}
       - name: Show outputs
         if: always()
         env:
