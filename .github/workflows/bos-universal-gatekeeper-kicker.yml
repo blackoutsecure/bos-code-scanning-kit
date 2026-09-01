@@ -354,7 +354,7 @@ jobs:
   action-test:
     name: Action test
     needs: parse-config
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'action_test'
+    if: always() && !cancelled() && needs.parse-config.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.operation == 'action_test'
     permissions:
       contents: read
       models: read
@@ -366,7 +366,7 @@ jobs:
   metadata:
     name: Repository metadata
     needs: parse-config
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'metadata'
+    if: always() && !cancelled() && needs.parse-config.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.operation == 'metadata'
     permissions:
       contents: read
       models: read
@@ -391,7 +391,7 @@ jobs:
   marketplace-validate:
     name: Marketplace validation
     needs: parse-config
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'marketplace_validate'
+    if: always() && !cancelled() && needs.parse-config.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.operation == 'marketplace_validate'
     permissions:
       contents: read
     uses: blackoutsecure/bos-automation-hub/.github/workflows/bos-universal-marketplace.yml@main
@@ -405,7 +405,7 @@ jobs:
   marketplace-release:
     name: Marketplace release
     needs: parse-config
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'marketplace_release'
+    if: always() && !cancelled() && needs.parse-config.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.operation == 'marketplace_release'
     permissions:
       contents: write
       models: read
@@ -425,7 +425,10 @@ jobs:
     name: Release (dev)
     needs: parse-config
     if: >-
-      github.ref_name == 'dev'
+      always()
+      && !cancelled()
+      && needs.parse-config.result == 'success'
+      && github.ref_name == 'dev'
       && (github.event_name != 'workflow_dispatch' || inputs.operation == 'full' || inputs.operation == 'release_only' || inputs.operation == 'security_only')
     permissions:
       contents: write # monitor tracking-file commit + GitHub Release publish
@@ -613,7 +616,10 @@ jobs:
     name: Release (main)
     needs: parse-config
     if: >-
-      github.ref_name == 'main'
+      always()
+      && !cancelled()
+      && needs.parse-config.result == 'success'
+      && github.ref_name == 'main'
       && (github.event_name != 'workflow_dispatch' || inputs.operation == 'full' || inputs.operation == 'release_only' || inputs.operation == 'security_only')
     permissions:
       contents: write # monitor tracking-file commit + GitHub Release publish
