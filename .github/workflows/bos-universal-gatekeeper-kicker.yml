@@ -805,6 +805,8 @@ jobs:
     name: Dispatch route verdict
     needs:
       - parse-config
+      - sync-check-dev
+      - sync-check-main
       - action-test
       - metadata
       - marketplace-validate
@@ -820,6 +822,10 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           TARGET_REF: ${{ github.ref_name }}
           PARSE_RESULT: ${{ needs.parse-config.result }}
+          SYNC_DEV_RESULT: ${{ needs.sync-check-dev.result }}
+          SYNC_MAIN_RESULT: ${{ needs.sync-check-main.result }}
+          SYNC_DEV_CHANGED: ${{ needs.sync-check-dev.outputs.changed_files }}
+          SYNC_MAIN_CHANGED: ${{ needs.sync-check-main.outputs.changed_files }}
           ACTION_TEST_RESULT: ${{ needs.action-test.result }}
           METADATA_RESULT: ${{ needs.metadata.result }}
           MARKETPLACE_VALIDATE_RESULT: ${{ needs.marketplace-validate.result }}
@@ -829,7 +835,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [ "${PARSE_RESULT}" = "success" ] || { echo "::error::Config parsing did not succeed."; exit 1; }
+          if [ "${OPERATION}" = "sync_only" ]; then
+            if [ "${SYNC_DEV_RESULT}" = "success" ] || [ "${SYNC_MAIN_RESULT}" = "success" ]; then
+              echo "::notice title=Dispatch route complete::Managed sync executed successfully."
+              exit 0
+            fi
+            echo "::error::Managed sync did not execute successfully."
+            exit 1
+          fi
+          if [ "${PARSE_RESULT}" != "success" ]; then
+            changed="${SYNC_DEV_CHANGED}"$'\n'"${SYNC_MAIN_CHANGED}"
+            if [ "${PARSE_RESULT}" = "skipped" ] && { grep -qF '.github/workflows/bos-universal-gatekeeper-kicker.yml' <<< "${changed}" || grep -qF '.github/bos-universal-config.json' <<< "${changed}"; }; then
+              echo "::notice title=Dispatch route deferred::Managed routing inputs changed; the fresh commit must start a new run."
+              exit 0
+            fi
+            echo "::error::Config parsing did not succeed and no controlling managed-file change explains the skip."
+            exit 1
+          fi
           case "${OPERATION}" in
             full|release_only|security_only)
               expected="${RELEASE_MAIN_RESULT}"
@@ -839,7 +861,6 @@ jobs:
             metadata) expected="${METADATA_RESULT}" ;;
             marketplace_validate) expected="${MARKETPLACE_VALIDATE_RESULT}" ;;
             marketplace_release) expected="${MARKETPLACE_RELEASE_RESULT}" ;;
-            sync_only) expected="success" ;;
             *) echo "::error::Unknown operation '${OPERATION}'."; exit 1 ;;
           esac
           if [ "${expected}" = "skipped" ]; then
