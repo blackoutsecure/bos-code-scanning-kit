@@ -32,11 +32,11 @@ name: Self-scan · dogfood action against own repo
   workflow_dispatch:
     inputs:
       fail_on:
-        description: 'Override fail_on (fail|never).'
+        description: "Override fail_on (fail|never)."
         required: false
         type: choice
-        default: 'never'
-        options: ['never', 'fail']
+        default: "never"
+        options: ["never", "fail"]
       advanced_scanning:
         description: >-
           Force advanced posture probes (PS001/PS002/PS003) on or off. Leave
@@ -46,15 +46,15 @@ name: Self-scan · dogfood action against own repo
         type: boolean
         default: false
       require_pat:
-        description: 'Fail if advanced scanning is requested but SCANNING_PAT is not set. Useful for verifying the PAT secret is actually present (instead of silently falling back to GITHUB_TOKEN).'
+        description: "Fail if advanced scanning is requested but SCANNING_PAT is not set. Useful for verifying the PAT secret is actually present (instead of silently falling back to GITHUB_TOKEN)."
         required: false
         type: boolean
         default: false
       http_timeout:
-        description: 'Per-request HTTP timeout (seconds) for posture probes. Default 20. Bump to ride out GH API latency or slow self-hosted egress.'
+        description: "Per-request HTTP timeout (seconds) for posture probes. Default 20. Bump to ride out GH API latency or slow self-hosted egress."
         required: false
         type: string
-        default: '20'
+        default: "20"
 
 permissions:
   contents: read
@@ -93,9 +93,9 @@ jobs:
           default_runner: ${{ vars.DEFAULT_RUNNER }}
           runner_x64: ${{ vars.RUNNER_X64 }}
           runner_arm64: ${{ vars.RUNNER_ARM64 }}
-          require_default_runner: 'false'
-          require_runner_x64: 'true'
-          require_runner_arm64: 'true'
+          require_default_runner: "false"
+          require_runner_x64: "true"
+          require_runner_arm64: "true"
 
   self-scan:
     name: Self-scan (${{ matrix.arch }})
@@ -120,11 +120,11 @@ jobs:
     steps:
       - name: Mint security audit token
         id: security-app
-        if: vars.SECURITY_AUDIT_APP_ID != ''
+        if: vars.GATEWALL_APP_ID != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.SECURITY_AUDIT_APP_ID }}
-          private-key: ${{ secrets.SECURITY_AUDIT_APP_PRIVATE_KEY }}
+          app-id: ${{ vars.GATEWALL_APP_ID }}
+          private-key: ${{ secrets.GATEWALL_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-actions: read
@@ -200,9 +200,9 @@ jobs:
       - id: scan
         uses: ./
         with:
-          enable_posture: 'true'
-          enable_scanners: 'true'
-          enable_upload: 'true'
+          enable_posture: "true"
+          enable_scanners: "true"
+          enable_upload: "true"
           fail_on: ${{ inputs.fail_on || 'never' }}
           http_timeout: ${{ inputs.http_timeout || '20' }}
           github_token: ${{ steps.security-app.outputs.token || (steps.mode.outputs.use_pat == 'true' && secrets['SCANNING_PAT'] || github.token) }}
