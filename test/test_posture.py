@@ -45,6 +45,11 @@ class FakeGitHub(posture_mod.GitHub):
             raise posture_mod.GitHubError(f"{status} for {path}")
         return body
 
+    def patch(self, path, payload):
+        self.calls.append(path)
+        self.patch_payload = payload
+        return {}
+
 
 # ---------------------------------------------------------------------------
 # Workflow permissions scan (PS010, PS011) — local file walk
@@ -291,6 +296,16 @@ def test_ps013_pass_with_details_when_tag_pinned(tmp_path: Path):
     assert target and all(f.severity == "pass" for f in target)
     assert any("tag/branch-pinned" in f.message and "`v1`" in f.message
                for f in target)
+
+
+def test_ps013_codeless_coverage_is_explicitly_declared(tmp_path: Path):
+    findings = posture_mod._scan_msdo(
+        tmp_path,
+        WorkflowsPosture(msdo_coverage="codeless"),
+    )
+    assert len(findings) == 1
+    assert findings[0].severity == "pass"
+    assert "codeless coverage declared" in findings[0].message
 
 
 def test_ps013_warn_when_absent_and_warn_severity(tmp_path: Path):
@@ -688,11 +703,33 @@ def test_ghas_not_entitled_skips_ps001_ps002_ps004_but_runs_ps003():
     assert sev["PS002"] == "skip"
     assert sev["PS003"] == "pass"
     assert sev["PS004"] == "skip"
-    # Message must name the SKU so the operator knows it's a paid-tier
-    # issue, not a toggle they forgot to flip.
-    assert "Advanced Security" in msg["PS001"]
-    assert "Advanced Security" in msg["PS002"]
-    assert "Advanced Security" in msg["PS004"]
+    # Message must name the relevant product so the operator knows this is an
+    # entitlement issue, not a toggle they can enable without a licence.
+    assert "Code Security" in msg["PS001"]
+    assert "Secret Protection" in msg["PS002"]
+    assert "Secret Protection" in msg["PS004"]
+
+
+def test_ps002_auto_enables_secret_scanning_for_entitled_repository():
+    fake = FakeGitHub({
+        "/repos/o/r": ({"visibility": "public", "private": False}, 200),
+        "/repos/o/r/code-scanning/default-setup": ({"state": "configured"}, 200),
+        "/repos/o/r/secret-scanning/alerts?per_page=1": (None, 404),
+        "/repos/o/r/vulnerability-alerts": (None, 204),
+    })
+    out = posture_mod._audit_ghas(
+        fake,
+        "o",
+        "r",
+        GHASPosture(require_push_protection="skip"),
+        auto_enable_secret_scanning=True,
+    )
+    target = [f for f in out if f.rule_id == "PS002"]
+    assert target[0].severity == "pass"
+    assert "enabled automatically" in target[0].message
+    assert fake.patch_payload == {
+        "security_and_analysis": {"secret_scanning": {"status": "enabled"}},
+    }
 
 
 def test_ghas_entitlement_gate_skips_ghas_endpoints_when_not_entitled():

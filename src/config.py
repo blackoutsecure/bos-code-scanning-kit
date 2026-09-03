@@ -37,6 +37,7 @@ class ConfigError(ValueError):
 SEVERITIES = ("fail", "warn", "skip")
 FAIL_ON_LEVELS = ("critical", "high", "medium", "low", "never")
 SCAN_MODES = ("auto", "explicit", "none")
+MSDO_COVERAGE_MODES = ("auto", "action", "codeless")
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +93,9 @@ class WorkflowsPosture:
     # the row only shows up in the skips JSON sidecar). Flip to
     # `"warn"` or `"fail"` to require MSDO across the org.
     detect_msdo: str = "skip"
+    # `codeless` records coverage supplied by a Microsoft Defender for Cloud
+    # connector. It cannot be verified from checkout files, unlike `action`.
+    msdo_coverage: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -164,6 +168,9 @@ class RemediationConfig:
     enable_ai_findings_summary: bool = True
     ai_findings_summary_provider: str = "auto"
     local_heuristic_fallback: bool = True
+    # Never enable a potentially billed GitHub feature unless the repository
+    # explicitly opts in and the audit confirms it is entitled.
+    auto_enable_secret_scanning: bool = False
 
 
 @dataclass(frozen=True)
@@ -455,6 +462,7 @@ def _posture_from_dict(d: dict[str, Any]) -> PostureConfig:
         require_pinned_actions=_severity(wf_d, "require_pinned_actions", "warn"),
         allow_tag_pin=_str_tuple(wf_d, "allow_tag_pin"),
         detect_msdo=_severity(wf_d, "detect_msdo", "skip"),
+        msdo_coverage=_msdo_coverage(wf_d),
     )
 
     branches_d = _dict(d, "branches")
@@ -530,6 +538,7 @@ def _remediation_from_dict(d: dict[str, Any]) -> RemediationConfig:
         enable_ai_findings_summary=_bool(d, "enable_ai_findings_summary", True),
         ai_findings_summary_provider=_str(d, "ai_findings_summary_provider", "auto"),
         local_heuristic_fallback=_bool(d, "local_heuristic_fallback", True),
+        auto_enable_secret_scanning=_bool(d, "auto_enable_secret_scanning", False),
     )
 
 
@@ -575,6 +584,15 @@ def _severity(d: dict[str, Any], key: str, default: str) -> str:
     if value not in SEVERITIES:
         raise ConfigError(
             f"`{key}`: '{value}' is not one of {SEVERITIES}"
+        )
+    return value
+
+
+def _msdo_coverage(d: dict[str, Any]) -> str:
+    value = d.get("msdo_coverage", "auto")
+    if value not in MSDO_COVERAGE_MODES:
+        raise ConfigError(
+            f"`msdo_coverage`: '{value}' is not one of {MSDO_COVERAGE_MODES}"
         )
     return value
 

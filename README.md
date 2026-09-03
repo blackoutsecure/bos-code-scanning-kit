@@ -72,7 +72,7 @@ required reviews, and CODEOWNERS for every branch you care about.
     - [Version pinning](#version-pinning)
   - [⚙️ Action inputs](#️-action-inputs)
   - [📤 Action outputs](#-action-outputs)
-  - [🔒 SCANNING_PAT — advanced posture credentials walkthrough](#-scanning_pat--advanced-posture-credentials-walkthrough)
+  - [🔒 GitHub App (preferred) and SCANNING_PAT (legacy fallback)](#-github-app-preferred-and-scanning_pat-legacy-fallback--posture-credentials)
   - [Posture rule reference](#posture-rule-reference)
     - [LD001-LD004 — dependency licences](#ld001-ld004--dependency-licences)
   - [🧪 Supported code scanning](#-supported-code-scanning)
@@ -90,12 +90,12 @@ required reviews, and CODEOWNERS for every branch you care about.
 
 - GitHub-hosted Linux runner (`ubuntu-latest` or newer) — the kit
   installs Python 3.12 via `actions/setup-python@v6.2.0` automatically.
-- For the **posture audit**: a token with `repo` scope. The default
+- For the **posture audit**: prefer a short-lived GitHub App installation token
+  with the required read scopes. The default
   `${{ secrets.GITHUB_TOKEN }}` is enough for the code-scanning probe
   (`PS001`). Secret-scanning (`PS002`), Dependabot (`PS003`), and
-  branch-protection probes (`PS020`-`PS025`) require a PAT — see
-  [🔒 SCANNING_PAT — advanced posture credentials walkthrough](#-scanning_pat--advanced-posture-credentials-walkthrough)
-  for the full tick / don't-tick checklist (classic and fine-grained).
+  branch-protection probes (`PS020`-`PS025`) need elevated read access — see
+  [🔒 GitHub App (preferred) and SCANNING_PAT (legacy fallback)](#-github-app-preferred-and-scanning_pat-legacy-fallback--posture-credentials).
 - For the **SARIF upload**: `security-events: write` in your workflow
   `permissions:` block.
 - For the **dependency licence rules** (`LD001`-`LD004`): the dependency
@@ -131,11 +131,9 @@ jobs:
 
       - uses: blackoutsecure/bos-code-scanning-kit@v1
         with:
-          # Prefer SCANNING_PAT when the org/repo has set it (unlocks
-          # PS002 / PS003 / PS020-PS025); otherwise fall back to the
-          # workflow's built-in GITHUB_TOKEN (PS001 only — the other
-          # posture rules emit `skip` rows). See § 'SCANNING_PAT —
-          # advanced posture credentials' below for the PAT recipe.
+          # Prefer a GitHub App installation token (the Gatekeeper mints one
+          # automatically) to unlock PS002 / PS003 / PS020-PS025. The PAT
+          # expression below remains a legacy fallback for standalone use.
           github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}
 ```
 
@@ -174,12 +172,10 @@ environment variables such as `OPENAI_API_KEY` and
 `OPENAI_API_ENDPOINT`. Keep credentials in Actions secrets or the runner
 environment; never commit them to config files.
 
-> The `secrets.SCANNING_PAT || secrets.GITHUB_TOKEN` form is safe to
-> ship before you've created the PAT — when the secret is unset, the
-> expression evaluates to `secrets.GITHUB_TOKEN` and the kit runs in
-> baseline mode (PS001 only). Adding `SCANNING_PAT` at the org/repo
-> level later upgrades every consuming workflow automatically with no
-> code changes.
+> Gatekeeper callers use a short-lived GitHub App installation token first.
+> The `secrets.SCANNING_PAT || secrets.GITHUB_TOKEN` form remains safe for
+> standalone workflows when an App is unavailable: an unset PAT falls back to
+> baseline `GITHUB_TOKEN` coverage.
 
 ### Version pinning
 
@@ -263,15 +259,17 @@ recommendations across runs. The kit does not invent or apply patches;
 provided. Consumers should default to notify-only behavior and must not create
 a PR from recommendation prose alone.
 
-## 🔒 SCANNING_PAT — advanced posture credentials walkthrough
+## 🔒 GitHub App (preferred) and SCANNING_PAT (legacy fallback) — posture credentials
 
 The posture audit can run in two modes:
 
 - `secrets.GITHUB_TOKEN` gives baseline visibility. It can confirm the
   code-scanning surface, but GitHub blocks several admin-level posture
   checks from that token.
-- `secrets.SCANNING_PAT` gives full posture coverage when you grant the
-  required repository access and pass it through the action input.
+- A GitHub App installation token is the preferred way to grant the required
+  repository access. The Gatekeeper mints and passes this token automatically.
+- `secrets.SCANNING_PAT` remains a legacy fallback when an installable GitHub
+  App is not available.
 
 Use this caller pattern in the workflow that runs the kit:
 
@@ -283,21 +281,20 @@ with:
 With only `GITHUB_TOKEN`, checks that require admin-level visibility
 (for example secret scanning, Dependabot alerts, and branch protection)
 may appear as `skip` / `Not Assessed` rows. That means the kit could not
-collect enough evidence for a real verdict. Adding `SCANNING_PAT`
-upgrades those rows to real `pass`, `warn`, or `fail` evaluations.
+collect enough evidence for a real verdict. Passing a GitHub App installation
+token upgrades those rows to real `pass`, `warn`, or `fail` evaluations.
 
 Walkthrough:
 
-1. Create a PAT for the repositories you want to audit.
-2. Preferred: use a fine-grained PAT scoped only to the selected repos.
-3. Grant the PAT read access for repository metadata plus the security
-   and administration surfaces needed by posture checks.
-4. Fallback: use a classic PAT with `repo` scope.
-5. Store the token as an Actions secret named `SCANNING_PAT` at the org
-   or repository level.
-6. Pass the token with `github_token: ${{ secrets.SCANNING_PAT || secrets.GITHUB_TOKEN }}`.
-7. Re-run the workflow and confirm previously skipped rows now show
+1. Install a GitHub App on the repositories you want to audit.
+2. Grant it read access to repository metadata, secret-scanning alerts,
+   Dependabot alerts, and repository administration.
+3. Mint an installation token in the calling workflow and pass it with
+   `github_token: ${{ steps.security-app.outputs.token }}`.
+4. Re-run the workflow and confirm previously skipped rows now show
    `pass`, `warn`, or `fail`.
+5. Only when an App cannot be installed, use a fine-grained `SCANNING_PAT`
+   scoped to the selected repositories with the same read permissions.
 
 ## Posture rule reference
 
@@ -570,6 +567,9 @@ posture:
     require_pinned_actions: warn # PS012 - fail | warn | skip
     allow_tag_pin: [] # owner/repo entries exempted from PS012 (e.g. ['actions/checkout'])
     detect_msdo: skip
+    # auto detects only a checked-in MSDO action. Codeless Defender for Cloud
+    # coverage is external, so declare it explicitly after onboarding.
+    msdo_coverage: auto # auto | action | codeless
 
   branches:
     main:
@@ -598,7 +598,17 @@ remediation:
   enable_ai_findings_summary: true # false disables all model calls
   ai_findings_summary_provider: auto # auto | none | github-models | external name
   local_heuristic_fallback: true
+  auto_enable_secret_scanning: false # explicit opt-in; requires an entitled repo + Administration: write
 ```
+
+`msdo_coverage: codeless` records that the organization uses Microsoft
+Defender for Cloud's codeless DevOps scanning. The kit cannot verify that
+external Azure connector from a repository checkout, so confirm connector
+status and repository discovery in
+[Defender for Cloud](https://learn.microsoft.com/en-us/azure/defender-for-cloud/quickstart-onboard-github).
+Use `auto` when the kit should detect a checked-in
+`microsoft/security-devops-action` workflow instead; use `action` when that
+workflow is required by policy.
 
 Unknown keys are ignored so future kit versions and other sections in a
 universal config do not break existing callers. Set
@@ -613,6 +623,15 @@ GitHub Models uses `GITHUB_MODELS_TOKEN` when present, otherwise the workflow
 and `GITHUB_MODELS_MODEL`. Add the workflow permission required by your
 GitHub Models setup; a token without model access simply produces the local
 fallback.
+
+`auto_enable_secret_scanning` is `false` by default. When explicitly enabled,
+the kit turns on secret scanning only after GitHub confirms that the repository
+is entitled to the feature. The GitHub App installation token must have
+repository `Administration: write`; otherwise the audit leaves the configured
+severity in place and reports the permission failure with a manual enablement
+link. The kit never attempts to purchase or assign a GitHub Secret Protection
+license. For eligibility, licensing, and manual rollout guidance, see
+[GitHub's secret-scanning availability documentation](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning#how-can-i-access-this-feature).
 
 ## ⚠️ Runtime and repository notes
 
@@ -695,6 +714,7 @@ ruff check src test
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 <!-- >>> managed-file-sync:security_readme_pointer >>> -->
+
 ## Security & secrets
 
 This repository is built with Blackout Secure's reusable GitHub Actions
@@ -704,4 +724,5 @@ Hub/Cloudflare/Balena setup walkthroughs), see the
 ["Secrets pipelining strategy"](https://github.com/blackoutsecure/bos-automation-hub#secrets-pipelining-strategy)
 section of `bos-automation-hub`. To report a vulnerability, see
 [SECURITY.md](https://github.com/blackoutsecure/.github/blob/main/SECURITY.md).
+
 <!-- <<< managed-file-sync:security_readme_pointer <<< -->

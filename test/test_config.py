@@ -27,16 +27,28 @@ def test_defaults_when_no_path_given():
     assert cfg.remediation.enable_ai_findings_summary is True
     assert cfg.remediation.ai_findings_summary_provider == "auto"
     assert cfg.remediation.local_heuristic_fallback is True
+    assert cfg.remediation.auto_enable_secret_scanning is False
+    assert cfg.posture.workflows.msdo_coverage == "auto"
     assert cfg.posture.branches == {}
 
 
 def test_remediation_flags_can_disable_ai_and_select_provider(tmp_path: Path):
     p = tmp_path / ".bos-scan.yml"
-    p.write_text("remediation:\n  enable_ai_findings_summary: false\n  ai_findings_summary_provider: openai\n  local_heuristic_fallback: true\n")
+    p.write_text("remediation:\n  enable_ai_findings_summary: false\n  ai_findings_summary_provider: openai\n  local_heuristic_fallback: true\n  auto_enable_secret_scanning: true\n")
     cfg = cfg_mod.load(p)
     assert cfg.remediation.enable_ai_findings_summary is False
     assert cfg.remediation.ai_findings_summary_provider == "openai"
     assert cfg.remediation.local_heuristic_fallback is True
+    assert cfg.remediation.auto_enable_secret_scanning is True
+
+
+def test_msdo_coverage_mode_is_validated(tmp_path: Path):
+    p = tmp_path / ".bos-scan.yml"
+    p.write_text("posture:\n  workflows:\n    msdo_coverage: codeless\n")
+    assert cfg_mod.load(p).posture.workflows.msdo_coverage == "codeless"
+    p.write_text("posture:\n  workflows:\n    msdo_coverage: unknown\n")
+    with pytest.raises(cfg_mod.ConfigError, match="msdo_coverage"):
+        cfg_mod.load(p)
 
 
 # ---------------------------------------------------------------------------

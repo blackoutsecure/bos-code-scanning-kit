@@ -4,15 +4,14 @@
 # Licensed under Apache License 2.0
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-name: 'Blackout Secure Code Scanning Kit'
+name: "Blackout Secure Code Scanning Kit"
 # MP010: keep <= 125 chars; full feature list lives in README.md.
 description: >-
   Run secret/code scanners and posture audits, then upload a unified SARIF log to GitHub Advanced Security.
-author: 'Blackout Secure'
-
+author: "Blackout Secure"
 branding:
-  color: 'blue'
-  icon: 'shield'
+  color: "blue"
+  icon: "shield"
 
 # Composite Action orchestration:
 #
@@ -34,25 +33,25 @@ branding:
 inputs:
   # ----- Identification -----
   owner:
-    description: 'GitHub owner of the repo being scanned. Defaults to the workflow context.'
+    description: "GitHub owner of the repo being scanned. Defaults to the workflow context."
     required: false
-    default: ''
+    default: ""
   repo:
-    description: 'GitHub repo name being scanned. Defaults to the workflow context.'
+    description: "GitHub repo name being scanned. Defaults to the workflow context."
     required: false
-    default: ''
+    default: ""
   use_global_config:
     description: >-
       `auto` loads the organization-level global config when present.
       `true` requires it; `false` disables it.
     required: false
-    default: 'auto'
+    default: "auto"
   global_config_path:
     description: >-
       Organization-level config path. Loaded automatically when present,
       after marketplace defaults and before the repository config.
     required: false
-    default: '.github/blackout-secure-code-scanning-kit-global-config.yml'
+    default: ".github/blackout-secure-code-scanning-kit-global-config.yml"
   use_marketplace_config:
     description: >-
       `true` (default) applies the bundled marketplace baseline first, then
@@ -60,18 +59,18 @@ inputs:
       bundled baseline entirely and rely solely on your global/repository
       config (falling back to the dataclass defaults for anything unset).
     required: false
-    default: 'true'
+    default: "true"
   config:
     description: >-
       Repository config path. Defaults to `.github/bos-universal-config.json`,
       `.github/bos-universal-config.yml`, then legacy `.bos-scan.yml` discovery.
     required: false
-    default: ''
+    default: ""
 
   # ----- Authentication -----
   #
-  # Recommended caller pattern (prefers SCANNING_PAT when the org has set it,
-  # otherwise falls back to the workflow's GITHUB_TOKEN automatically):
+  # Standalone caller fallback pattern. Gatekeeper callers should pass a
+  # short-lived GitHub App installation token; SCANNING_PAT remains legacy:
   #
   #   - uses: blackoutsecure/bos-code-scanning-kit@v1
   #     with:
@@ -85,29 +84,28 @@ inputs:
   # the `github.token` fallback is applied at the step level instead.
   github_token:
     description: >-
-      GitHub token for the posture audit. Leave blank to use the workflow's
-      built-in GITHUB_TOKEN for baseline checks. For full posture coverage,
-      create a `SCANNING_PAT` secret and pass it here with
-      `github_token: <SCANNING_PAT-or-GITHUB_TOKEN>`.
-      The PAT lets the kit verify admin-gated controls such as secret scanning,
-      Dependabot alerts, and branch protection instead of reporting them as
-      skipped. Walkthrough: https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough
+      Token for the posture audit. Prefer a short-lived GitHub App installation
+      token with the required read scopes; Gatekeeper mints one automatically.
+      Leave blank to use the workflow's built-in GITHUB_TOKEN for baseline
+      checks. A scoped `SCANNING_PAT` is supported as a legacy fallback when an
+      App cannot be installed. Elevated credentials let the kit verify
+      admin-gated controls instead of reporting them as skipped.
     required: false
-    default: ''
+    default: ""
 
   # ----- Scope gates (off → skip an entire stage) -----
   enable_posture:
-    description: '`true` to run the posture audit step.'
+    description: "`true` to run the posture audit step."
     required: false
-    default: 'true'
+    default: "true"
   enable_scanners:
-    description: '`true` to run the bundled scanners (actionlint / gitleaks / shellcheck).'
+    description: "`true` to run the bundled scanners (actionlint / gitleaks / shellcheck)."
     required: false
-    default: 'true'
+    default: "true"
   enable_upload:
-    description: '`true` to upload the merged SARIF to GitHub Advanced Security.'
+    description: "`true` to upload the merged SARIF to GitHub Advanced Security."
     required: false
-    default: 'true'
+    default: "true"
   category:
     description: >-
       Code Scanning category for the SARIF upload. Override this when a repo
@@ -115,7 +113,7 @@ inputs:
       (e.g. a PR gate AND a release pipeline) so the two uploads don't
       collide under the same category and race/overwrite each other.
     required: false
-    default: 'bos-code-scanning-kit'
+    default: "bos-code-scanning-kit"
 
   # ----- Failure policy -----
   fail_on:
@@ -124,7 +122,7 @@ inputs:
       or any scanner reports a result. `never` — collect findings but
       always exit 0 (useful for first-time rollouts).
     required: false
-    default: 'fail'
+    default: "fail"
 
   # ----- Tuning -----
   http_timeout:
@@ -137,13 +135,13 @@ inputs:
       brief GitHub API latency spikes that otherwise surface as
       `PS*** error: HTTP 502` rows. Bare integer string; no unit.
     required: false
-    default: '20'
+    default: "20"
 
   # ----- Output -----
   sarif_output:
-    description: 'Path for the merged SARIF artefact.'
+    description: "Path for the merged SARIF artefact."
     required: false
-    default: 'bos-scan.sarif'
+    default: "bos-scan.sarif"
 
 outputs:
   quality_applicability:
@@ -152,13 +150,13 @@ outputs:
       apply to the checked-out repository and why.
     value: ${{ steps.detect.outputs.quality_applicability }}
   sarif_path:
-    description: 'Path to the merged SARIF file produced by the run.'
+    description: "Path to the merged SARIF file produced by the run."
     value: ${{ steps.merge.outputs.sarif_path }}
   posture_failures:
-    description: 'Number of FAIL findings from the posture audit.'
+    description: "Number of FAIL findings from the posture audit."
     value: ${{ steps.posture.outputs.failures }}
   recommendations_path:
-    description: 'Path to structured posture remediation recommendations.'
+    description: "Path to structured posture remediation recommendations."
     value: ${{ steps.posture.outputs.recommendations_path }}
   outcome:
     description: >-
@@ -179,7 +177,7 @@ runs:
     - name: Set up Python
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
-        python-version: '3.12'
+        python-version: "3.12"
 
     - name: Install bos-code-scanning-kit
       shell: bash
@@ -759,7 +757,7 @@ runs:
            f"`{os.environ.get('CATEGORY') or 'bos-code-scanning-kit'}`; path: `{sarif_path}`."),
             ("Failure policy", f"`{fail_on}`", "`fail` blocks on failure findings; `never` keeps the run advisory."),
             ("Token mode", token_mode, token_capability),
-            ("Observed posture coverage", observed_coverage, "Use `SCANNING_PAT` if admin-gated checks are skipped."),
+            ("Observed posture coverage", observed_coverage, "Use a GitHub App installation token if admin-gated checks are skipped; `SCANNING_PAT` is a legacy fallback."),
         ]
 
         all_annotations = []
@@ -782,7 +780,7 @@ runs:
                 "source": "Posture audit",
                 "rule_id": finding.get("rule_id", "unknown"),
                 "severity": finding.get("severity", "warn"),
-                "location": finding.get("location") or "—",
+                "location": finding.get("location") or "repository",
                 "message": finding.get("message") or "No message provided.",
                 "recommendation": finding.get("remediation") or "Review and remediate this posture control.",
             })
@@ -830,7 +828,7 @@ runs:
         if scanner_annotations:
             report_recommendations.append("Review scanner annotations in the SARIF upload and either remediate or document accepted risk.")
         if skips:
-            report_recommendations.append("Provision `SCANNING_PAT` to convert Not Assessed posture checks into evidence-backed pass/warn/fail results.")
+            report_recommendations.append("Install the GitHub App with the required read scopes to convert Not Assessed posture checks into evidence-backed pass/warn/fail results. `SCANNING_PAT` is a legacy fallback.")
         if not report_recommendations:
             report_recommendations.append("No immediate remediation is required by the configured controls; keep this report with the release evidence trail.")
 
@@ -942,7 +940,7 @@ runs:
                 fh.write("\n### Findings requiring attention\n\n")
                 write_table(
                     fh,
-                    ["Source", "Rule", "Severity", "Location", "Evidence", "Recommended remediation"],
+                  ["Source", "Rule", "Severity", "Scope / location", "Evidence", "Recommended remediation"],
                     attention_rows,
                     lambda r: [r["source"], f"`{r['rule_id']}`", f"{severity_badge.get(r['severity'], 'ℹ️')} **{r['severity']}**", r["location"], r["message"], r["recommendation"]],
                     "No failing, warning, or scanner annotation rows were found.",
@@ -961,9 +959,9 @@ runs:
                 fh.write("\n<details open>\n<summary>Passed posture controls</summary>\n\n")
                 write_table(
                     fh,
-                    ["Rule", "Location", "Control", "Evidence"],
+                  ["Rule", "Scope", "Control", "Evidence"],
                     posture_passed,
-                    lambda f: [f"`{f.get('rule_id', 'unknown')}`", f.get("location") or "—", f.get("title") or "Control passed", f.get("message") or "Passed."],
+                  lambda f: [f"`{f.get('rule_id', 'unknown')}`", f.get("location") or "repository", f.get("title") or "Control passed", f.get("message") or "Passed."],
                     "No passed posture controls were recorded. If posture was disabled, enable it to collect pass evidence.",
                 )
                 fh.write("\n</details>\n")
@@ -977,20 +975,20 @@ runs:
                         "are shown here (not as failures) so reviewers know "
                         "what was *not* audited.\n\n"
                     )
-                    fh.write("| Rule | Reason | Location |\n")
+                    fh.write("| Rule | Reason | Scope |\n")
                     fh.write("|---|---|---|\n")
                     for s in skips:
                         rid = s.get("rule_id", "?")
                         msg = (s.get("message") or "").replace("|", "\\|")
-                        loc = (s.get("location") or "—").replace("|", "\\|")
+                        loc = (s.get("location") or "repository").replace("|", "\\|")
                         fh.write(f"| `{rid}` | {msg} | {loc} |\n")
                 elif posture_skipped:
                     fh.write("\n### Not assessed checks\n\n")
                     write_table(
                         fh,
-                        ["Rule", "Location", "Reason"],
+                      ["Rule", "Scope", "Reason"],
                         posture_skipped,
-                        lambda f: [f"`{f.get('rule_id', 'unknown')}`", f.get("location") or "—", f.get("message") or "Skipped."],
+                      lambda f: [f"`{f.get('rule_id', 'unknown')}`", f.get("location") or "repository", f.get("message") or "Skipped."],
                         "No posture checks were skipped.",
                     )
                 else:
@@ -1005,21 +1003,21 @@ runs:
                         "rows into real `pass`, `warn`, or `fail` results:\n\n"
                     )
                     fh.write(
-                        "1. Create a repository or organization secret named "
-                        "`SCANNING_PAT`.\n"
+                        "1. Install a GitHub App with the required read permissions "
+                        "for the repository.\n"
                     )
                     fh.write(
-                        "2. Use a classic PAT with `repo`, or a fine-grained "
-                        "PAT with Administration, Security events, and Metadata "
-                        "read access for this repository.\n"
+                        "2. Mint an installation token in the calling workflow and "
+                        "pass it through `github_token`.\n"
                     )
                     fh.write(
-                        "3. Pass it to the kit with `github_token: <SCANNING_PAT-or-GITHUB_TOKEN>`.\n\n"
+                        "3. If an App cannot be installed, use a scoped `SCANNING_PAT` "
+                        "as the legacy fallback.\n\n"
                     )
                     fh.write(
-                        "Follow the official walkthrough in the "
+                        "Follow the credential guidance in the "
                         "[Blackout Secure Code Scanning Kit README]"
-                        "(https://github.com/blackoutsecure/bos-code-scanning-kit#scanning_pat--advanced-posture-credentials-walkthrough).\n"
+                        "(https://github.com/blackoutsecure/bos-code-scanning-kit#github-app-preferred-and-scanning_pat-legacy-fallback--posture-credentials).\n"
                     )
 
                 fh.write("\n### Recommendations\n\n")

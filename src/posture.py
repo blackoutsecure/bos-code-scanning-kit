@@ -122,7 +122,7 @@ def _recommended_actions(totals: dict[str, int]) -> list[str]:
     if totals["warn"]:
         actions.append("Review Warning findings during the next hardening cycle and document any accepted risk.")
     if totals["skip"]:
-        actions.append("Re-run with the required token scopes, such as a scoped `SCANNING_PAT`, to convert Not Assessed checks into pass/fail evidence.")
+        actions.append("Re-run with a GitHub App installation token that has the required read scopes to convert Not Assessed checks into pass/fail evidence. A scoped `SCANNING_PAT` remains a legacy fallback.")
     if not actions:
         actions.append("Maintain the current controls and keep this audit in the release or pull-request evidence trail.")
     actions.append("Review the SARIF upload in GitHub code scanning for durable finding history and alert triage.")
@@ -172,7 +172,10 @@ def _default_finding_remediation(rule_id: str, message: str) -> str:
     if rule_id == "PS001":
         return "Enable GitHub code scanning via Default setup or Advanced setup and ensure a supported CodeQL workflow is configured."
     if rule_id == "PS002":
-        return "Turn on GitHub secret scanning for the repository and review any existing alerts that should be remediated."
+        return (
+            "Turn on GitHub secret scanning for the repository and review any existing alerts that should be remediated. "
+            "Learn about availability and eligibility: https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning#how-can-i-access-this-feature"
+        )
     if rule_id == "PS003":
         return "Enable Dependabot vulnerability alerts and configure automated dependency updates for the repository."
     if rule_id == "PS004":
@@ -552,6 +555,22 @@ class GitHub:
                 return None, 403
             raise
 
+    def patch(self, path: str, payload: dict[str, Any]) -> Any:
+        """PATCH a repository setting using an explicitly supplied JSON body."""
+        req = urllib.request.Request(
+            f"{self.BASE}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            method="PATCH",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json",
+                "User-Agent": self.UA,
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        return self._do(req)
+
     def get_raw_text(self, owner: str, repo: str, branch: str, path: str) -> str | None:
         """Fetch a file's contents from a branch HEAD. Returns None on 404."""
         body, status = self.get_or_none(
@@ -779,9 +798,14 @@ def _scan_pinned_actions(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding
 # ---------------------------------------------------------------------------
 
 def _scan_msdo(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
-    """PS013 — detect `microsoft/security-devops-action` usage in workflows.
+    """PS013 — assess Microsoft Security DevOps coverage.
 
-    Best-effort, local-only static probe. The MSDO action is a meta-
+    `action` and `auto` inspect local workflow files for the MSDO action.
+    Codeless Microsoft Defender for Cloud scanning has no repository-local
+    artifact, so it must be declared as `msdo_coverage: codeless`; this action
+    intentionally does not claim to verify external Azure connector state.
+
+    The MSDO action is a meta-
     runner bundling Microsoft's OSS analyzers (Bandit / BinSkim / Trivy /
     Terrascan / Template-Analyzer / ESLint). We report it as part of the
     security posture so audits capture coverage even when those analyzers
@@ -796,6 +820,13 @@ def _scan_msdo(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
                          to push adoption org-wide.
     """
     out: list[Finding] = []
+    if cfg.msdo_coverage == "codeless":
+        out.append(Finding(
+            "PS013", "pass",
+            "Microsoft Security DevOps codeless coverage declared via Microsoft Defender for Cloud; "
+            "external connector state cannot be verified from repository files",
+        ))
+        return out
     wf_dir = repo_root / ".github" / "workflows"
     if not wf_dir.is_dir():
         # No workflows at all — nothing to scan, but still surface the
@@ -853,8 +884,10 @@ def _scan_msdo(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
         out.append(Finding(
             "PS013", cfg.detect_msdo,
             "Microsoft Security DevOps action (`microsoft/security-devops-action`) "
-            "not detected in any workflow — consider adding it for OSS analyzer "
-            "coverage (Bandit / BinSkim / Trivy / Terrascan / Template-Analyzer / ESLint).",
+            "not detected in any workflow. Codeless Defender for Cloud coverage cannot be "
+            "detected from repository files; set `posture.workflows.msdo_coverage: codeless` "
+            "when the organization is connected. Otherwise consider adding the action for OSS "
+            "analyzer coverage (Bandit / BinSkim / Trivy / Terrascan / Template-Analyzer / ESLint).",
         ))
 
     return out
@@ -898,7 +931,15 @@ def audit(
         findings.append(Finding("PS000", "error", str(exc)))
         return AuditResult(findings=tuple(findings))
 
-    findings.extend(_audit_ghas(gh, owner, repo, cfg.posture.ghas))
+    findings.extend(
+        _audit_ghas(
+            gh,
+            owner,
+            repo,
+            cfg.posture.ghas,
+            auto_enable_secret_scanning=cfg.remediation.auto_enable_secret_scanning,
+        )
+    )
     findings.extend(_audit_branches(gh, owner, repo, cfg.posture.branches))
     findings.extend(_audit_codeowners_api(gh, owner, repo, cfg.posture.codeowners, repo_root))
     findings.extend(_audit_dependency_licenses(gh, owner, repo, cfg.posture.dependencies))
@@ -943,14 +984,44 @@ def _ghas_entitlement(body: Any, status: int) -> str:
     return "unknown"
 
 
-_GHAS_NOT_ENTITLED_HINT = (
-    "GitHub Advanced Security is not enabled for this private repository "
-    "— Settings → Code security → GitHub Advanced Security → Enable "
-    "(requires the GHAS SKU). Skipping to avoid a false-negative warning."
+_CODE_SECURITY_NOT_ENTITLED_HINT = (
+    "GitHub Code Security is not available for this private or internal repository. "
+    "Code scanning is free for public repositories; private/internal repositories require the "
+    "appropriate GitHub Code Security entitlement. Learn more: https://docs.github.com/en/get-started/"
+    "learning-about-github/about-github-advanced-security. Skipping to avoid a false-negative warning."
 )
 
 
-def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Finding]:
+def _secret_protection_not_entitled_hint(repo_body: Any) -> str:
+    owner = repo_body.get("owner") if isinstance(repo_body, dict) else {}
+    owner_type = owner.get("type") if isinstance(owner, dict) else ""
+    if owner_type == "Organization":
+        eligibility = (
+            "Organization-owned private/internal repositories require GitHub Secret Protection "
+            "on GitHub Team or Enterprise Cloud."
+        )
+    else:
+        eligibility = (
+            "User-owned private repositories require GitHub Enterprise Cloud with Enterprise Managed Users, "
+            "or GitHub Enterprise Server with GitHub Secret Protection."
+        )
+    return (
+        "GitHub Secret Protection is not available for this private or internal repository. "
+        "Secret scanning is free for public repositories. "
+        f"{eligibility} Review eligibility and licensing: "
+        "https://docs.github.com/en/code-security/secret-scanning/introduction/"
+        "about-secret-scanning#how-can-i-access-this-feature. Skipping to avoid a false-negative warning."
+    )
+
+
+def _audit_ghas(
+    gh: GitHub,
+    owner: str,
+    repo: str,
+    cfg: GHASPosture,
+    *,
+    auto_enable_secret_scanning: bool = False,
+) -> list[Finding]:
     out: list[Finding] = []
 
     # Single repo-metadata fetch up front: powers the entitlement gate for
@@ -983,7 +1054,7 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
         if entitlement == "not_entitled":
             out.append(Finding(
                 "PS001", "skip",
-                f"GHAS code scanning unavailable — {_GHAS_NOT_ENTITLED_HINT}",
+                f"GitHub code scanning unavailable — {_CODE_SECURITY_NOT_ENTITLED_HINT}",
             ))
         else:
             body, status = gh.get_or_none(f"/repos/{owner}/{repo}/code-scanning/default-setup")
@@ -1043,25 +1114,47 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
         if entitlement == "not_entitled":
             out.append(Finding(
                 "PS002", "skip",
-                f"GHAS secret scanning unavailable — {_GHAS_NOT_ENTITLED_HINT}",
+                f"GitHub secret scanning unavailable — {_secret_protection_not_entitled_hint(repo_body)}",
             ))
         else:
             _body, status = gh.get_or_none(f"/repos/{owner}/{repo}/secret-scanning/alerts?per_page=1")
             if status == 200:
                 out.append(Finding("PS002", "pass", "GHAS secret scanning is enabled"))
             elif status == 404:
-                out.append(Finding(
-                    "PS002", cfg.require_secret_scanning,
-                    "GHAS secret scanning is not enabled — Settings → Code security → Secret scanning → Enable",
-                ))
+                if auto_enable_secret_scanning:
+                    try:
+                        gh.patch(
+                            f"/repos/{owner}/{repo}",
+                            {"security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
+                        )
+                    except GitHubError as exc:
+                        out.append(Finding(
+                            "PS002", cfg.require_secret_scanning,
+                            "GHAS secret scanning is not enabled and the requested automatic enablement failed",
+                            remediation=(
+                                "The repository is eligible, but the supplied token could not enable secret scanning: "
+                                f"{exc}. Grant the GitHub App repository Administration: write permission, or enable it manually. "
+                                "Instructions: https://docs.github.com/en/code-security/secret-scanning/working-with-secret-scanning-and-push-protection"
+                            ),
+                        ))
+                    else:
+                        out.append(Finding(
+                            "PS002", "pass",
+                            "GHAS secret scanning was enabled automatically by the configured remediation policy",
+                        ))
+                else:
+                    out.append(Finding(
+                        "PS002", cfg.require_secret_scanning,
+                        "GHAS secret scanning is not enabled — Settings → Code security → Secret scanning → Enable",
+                    ))
             elif status == 403:
                 # Token-scope limitation — see PS001 comment above.
                 out.append(Finding(
                     "PS002", "skip",
                     "secret scanning probe forbidden — token cannot read the secret-scanning endpoint (403)",
                     remediation=(
-                        "Provide SCANNING_PAT with Secret scanning alerts: read and repository "
-                        "Administration: read access, then rerun the audit. Only after the setting "
+                        "Use a GitHub App installation token with Secret scanning alerts: read and repository "
+                        "Administration: read access, then rerun the audit. A scoped SCANNING_PAT is a legacy fallback. Only after the setting "
                         "is readable should secret scanning be enabled or existing alerts remediated."
                     ),
                 ))
@@ -1091,8 +1184,8 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
                 "PS003", "skip",
                 "Dependabot probe forbidden — token cannot read vulnerability-alert settings (403)",
                 remediation=(
-                    "Provide SCANNING_PAT with Dependabot alerts: read and repository Administration: read "
-                    "access, then rerun the audit. If the setting is then confirmed disabled, enable "
+                    "Use a GitHub App installation token with Dependabot alerts: read and repository Administration: read "
+                    "access, then rerun the audit. A scoped SCANNING_PAT is a legacy fallback. If the setting is then confirmed disabled, enable "
                     "Dependabot alerts in Settings → Code security."
                 ),
             ))
@@ -1112,7 +1205,7 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
         if entitlement == "not_entitled":
             out.append(Finding(
                 "PS004", "skip",
-                f"GHAS secret-scanning push protection unavailable — {_GHAS_NOT_ENTITLED_HINT}",
+                f"GitHub secret-scanning push protection unavailable — {_secret_protection_not_entitled_hint(repo_body)}",
             ))
         elif repo_status == 200 and isinstance(repo_body, dict):
             sa = repo_body.get("security_and_analysis")
@@ -1121,7 +1214,8 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
                     "PS004", "skip",
                     "push-protection probe needs repository administration access — `security_and_analysis` is not visible",
                     remediation=(
-                        "Provide SCANNING_PAT with repository Administration: read access, then rerun the audit. "
+                        "Use a GitHub App installation token with repository Administration: read access, then rerun the audit. "
+                        "A scoped SCANNING_PAT is a legacy fallback. "
                         "Only after the setting is readable should secret-scanning push protection be enabled."
                     ),
                 ))
@@ -1143,7 +1237,8 @@ def _audit_ghas(gh: GitHub, owner: str, repo: str, cfg: GHASPosture) -> list[Fin
                 "PS004", "skip",
                 "push-protection probe forbidden — token cannot read repository security settings (403)",
                 remediation=(
-                    "Provide SCANNING_PAT with repository Administration: read access, then rerun the audit. "
+                    "Use a GitHub App installation token with repository Administration: read access, then rerun the audit. "
+                    "A scoped SCANNING_PAT is a legacy fallback. "
                     "Only after the setting is readable should secret-scanning push protection be enabled."
                 ),
             ))
@@ -1195,8 +1290,9 @@ def _audit_one_branch(
             f"branch `{branch}` protection check was forbidden — token scope is insufficient",
             location=loc,
             remediation=(
-                "Re-run with SCANNING_PAT or another token that has repository "
-                "Administration: read access so branch protection can be assessed."
+                "Re-run with a GitHub App installation token that has repository "
+                "Administration: read access so branch protection can be assessed. "
+                "A scoped SCANNING_PAT is a legacy fallback."
             ),
         ))
         return out
