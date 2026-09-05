@@ -37,15 +37,20 @@ run-name: Gatekeeper / ${{ inputs.operation || 'full' }} / ref:${{ github.ref_na
     # if more scheduled operations are needed later.
     - cron: "41 3 * * 0"
   push:
-    branches: [main]
-    paths:
-      - "Dockerfile"
-      - ".dockerignore"
-      - "root/**"
-      - "build/**"
-      - "scripts/**"
-      - ".github/bos-universal-config.json"
-      - ".github/workflows/bos-universal-gatekeeper-kicker.yml"
+    # Both long-lived branches: the job graph below is already dual-branch
+    # (`resolve-target-ref` -> `sync-check-dev`/`sync-check-main` ->
+    # `release-dev`/`release-main`), so restricting the trigger to `main`
+    # left `release-dev` reachable only from a manual dispatch raised while
+    # sitting on `dev`.
+    branches: [dev, main]
+    # Deliberately NO `paths:` filter. `on:` is parsed before any job runs
+    # and cannot evaluate expressions, so a single `file`-mode managed
+    # template cannot carry a static path list that fits a Docker image
+    # repo, a Node Action, and a static site at once. Per-repo relevance is
+    # decided by the `changed-paths` job below, which reads
+    # `launchpad.triggers.push_paths` from the consumer's own
+    # `.github/bos-universal-config.json`. Cost is one short job on an
+    # irrelevant push; the benefit is that the filter is repo-owned.
   workflow_dispatch:
     inputs:
       operation:
@@ -140,12 +145,13 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       - name: Check dispatcher authorization
-        uses: blackoutsecure/bos-workflow-gatekeeper@eae1fdd8ab731e72bf890fdb7c1504415d12d88c # v1.0.2
+        uses: blackoutsecure/bos-workflow-gatekeeper@c06e9fa7a60a75a3a1c8a8913b361fc39fc7dc35 # v1.0.3
         with:
           actor: ${{ github.triggering_actor || github.actor }}
           organization: ${{ github.repository_owner }}
           repository: ${{ github.repository }}
           event_name: ${{ github.event_name }}
+          trusted_app_slugs: ${{ vars.GATEWALL_APP_SLUG }}
           enterprise_slug: ${{ vars.GATEKEEPER_ENTERPRISE_SLUG }}
           required_teams: ${{ vars.GATEKEEPER_REQUIRED_TEAMS }}
           allow_org_admin: ${{ vars.GATEKEEPER_ALLOW_ORG_ADMIN != 'false' }}
@@ -158,16 +164,133 @@ jobs:
           enterprise_token: ${{ secrets.GATEKEEPER_AUTHZ_PAT }}
           summary: true
 
+  # Per-repo push relevance. Replaces the `on.push.paths` filter that a
+  # shared managed template cannot express. Reads the allowlist from the
+  # consumer's own config, so each repo declares the paths that should wake
+  # the pipeline. Runs before `resolve-target-ref`, and therefore before
+  # `sync-check-*` holds `contents: write`, so an irrelevant push never
+  # reaches a job that can commit. Non-push events always pass through.
+  #
+  # Config (optional):
+  #   { "launchpad": { "triggers": { "push_paths": ["src/**", "*.md"] } } }
+  # An absent, empty, or unreadable list means "run on every push", so a
+  # repo that has not opted in keeps the pre-existing behaviour.
+  changed-paths:
+    name: Filter changed paths
+    needs: authorize
+    runs-on: ${{ fromJSON(startsWith(vars.DEFAULT_RUNNER || 'ubuntu-latest', '[') && (vars.DEFAULT_RUNNER || 'ubuntu-latest') || format('"{0}"', vars.DEFAULT_RUNNER || 'ubuntu-latest')) }}
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    outputs:
+      should_run: ${{ steps.filter.outputs.should_run }}
+    steps:
+      - name: Checkout
+        if: github.event_name == 'push'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Evaluate push path allowlist
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          CONFIG_PATH: .github/bos-universal-config.json
+        run: |
+          set -euo pipefail
+
+          if [ "${EVENT_NAME}" != "push" ]; then
+            echo "Non-push event (${EVENT_NAME}); path filter not applicable."
+            echo "should_run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [ ! -f "${CONFIG_PATH}" ]; then
+            echo "::notice title=Path filter::No ${CONFIG_PATH}; running."
+            echo "should_run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          # `// empty` covers a missing key; `?` covers a non-array value.
+          # Accepts the key under `launchpad` (where the other launchpad
+          # subkeys live) or at top level, since `universal-config` hoists
+          # `triggers` either way.
+          patterns="$(jq -r '(.launchpad.triggers.push_paths // .triggers.push_paths)[]? // empty' \
+            "${CONFIG_PATH}" 2>/dev/null || true)"
+          if [ -z "${patterns}" ]; then
+            echo "::notice title=Path filter::No triggers.push_paths configured; running."
+            echo "should_run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          # Branch creation reports an all-zero `before`, and a force-push can
+          # report a SHA that is no longer an ancestor. Neither yields a
+          # meaningful diff, so fail open rather than silently skipping.
+          zero="0000000000000000000000000000000000000000"
+          if [ -z "${BEFORE_SHA}" ] || [ "${BEFORE_SHA}" = "${zero}" ] \
+            || ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            echo "::notice title=Path filter::No usable diff base; running."
+            echo "should_run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          changed="$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}")"
+          echo "Changed files:"
+          printf '%s\n' "${changed}" | sed 's/^/  /'
+
+          # The managed kicker and the config itself are always in scope: a
+          # sync commit to either must be able to re-trigger the pipeline.
+          # Here-strings rather than `mapfile` so this stays runnable under
+          # bash 3.2 for local testing, not just the runner's bash 5.
+          pattern_list=()
+          while IFS= read -r line; do
+            [ -n "${line}" ] && pattern_list+=("${line}")
+          done <<< "${patterns}"
+          pattern_list+=(".github/workflows/bos-universal-gatekeeper-kicker.yml")
+          pattern_list+=("${CONFIG_PATH}")
+
+          changed_list=()
+          while IFS= read -r line; do
+            [ -n "${line}" ] && changed_list+=("${line}")
+          done <<< "${changed}"
+
+          matched=""
+          # `${arr[@]+...}` guards the empty-array case, which is fatal under
+          # `set -u` before bash 4.4. A push can legitimately change nothing
+          # (empty commit, no-op merge); that matches native `paths:`
+          # semantics and correctly resolves to `should_run=false`.
+          for file in ${changed_list[@]+"${changed_list[@]}"}; do
+            [ -n "${file}" ] || continue
+            for pattern in "${pattern_list[@]}"; do
+              [ -n "${pattern}" ] || continue
+              # shellcheck disable=SC2254 # glob match is intentional
+              case "${file}" in
+                ${pattern}) matched="${file}"; break 2 ;;
+              esac
+            done
+          done
+
+          if [ -n "${matched}" ]; then
+            echo "::notice title=Path filter::Matched '${matched}'; running."
+            echo "should_run=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::notice title=Path filter::No changed file matched the allowlist; skipping."
+            echo "should_run=false" >> "${GITHUB_OUTPUT}"
+          fi
+
   # Cheap, config-free hub-ref resolution so `sync-check` (which must run
   # BEFORE `parse-config`, since it's a pre-flight) can still pick the
   # matching @dev/@main reusable workflow, same as every dual-branch kicker.
-  # Almost always resolves to `main` here in practice: Launchpad's `push`
-  # trigger is `branches: [main]` only, so only `workflow_dispatch` runs
-  # manually launched from a `dev` branch (or `schedule` on a repo whose
-  # default branch happens to be `dev`) ever see `ref_name == 'dev'`.
+  # `push` now covers both `dev` and `main`, so either ref is reachable
+  # automatically as well as from a manual dispatch or a `schedule` run on
+  # whichever branch is the repository default.
   resolve-target-ref:
     name: Resolve target hub ref
-    needs: authorize
+    needs: [authorize, changed-paths]
+    if: needs.changed-paths.outputs.should_run == 'true'
     runs-on: ${{ fromJSON(startsWith(vars.DEFAULT_RUNNER || 'ubuntu-latest', '[') && (vars.DEFAULT_RUNNER || 'ubuntu-latest') || format('"{0}"', vars.DEFAULT_RUNNER || 'ubuntu-latest')) }}
     timeout-minutes: 2
     outputs:
@@ -191,10 +314,11 @@ jobs:
   # Sync managed files ahead of the release so a stale kicker/config never
   # runs against outdated policy. If the sync commits a change to this
   # kicker file or the consumer config, defer entirely: the commit's push
-  # re-triggers a fresh run (see the `push.paths` above), so this run skips
-  # the rest of the pipeline instead of executing under a spec that's about
-  # to be superseded. Unrelated managed-file drift (docs, community-health,
-  # etc.) is committed but does not block this run.
+  # re-triggers a fresh run (both paths are always allowlisted by the
+  # `changed-paths` job above), so this run skips the rest of the pipeline
+  # instead of executing under a spec that's about to be superseded.
+  # Unrelated managed-file drift (docs, community-health, etc.) is committed
+  # but does not block this run.
   # Skipped on `schedule`: the standalone sync kicker already owns periodic
   # reconciliation (weekly cron + immediate config-push trigger) across every
   # repo, so the 6h Launchpad cron doesn't need to duplicate that cadence —
@@ -336,7 +460,7 @@ jobs:
       contents: read
     steps:
       - name: Verify declared dependencies
-        uses: blackoutsecure/bos-workflow-gatekeeper@eae1fdd8ab731e72bf890fdb7c1504415d12d88c # v1.0.2
+        uses: blackoutsecure/bos-workflow-gatekeeper@c06e9fa7a60a75a3a1c8a8913b361fc39fc7dc35 # v1.0.3
         with:
           preflight_only: true
           preflight_spec: ${{ toJson(fromJson(needs.parse-config.outputs.cfg).gatekeeper.preflight) }}
