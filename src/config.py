@@ -174,6 +174,16 @@ class RemediationConfig:
 
 
 @dataclass(frozen=True)
+class RedactionConfig:
+    # On by default: run logs, job summaries, and uploaded reports are world
+    # readable on a public repository, and GitHub only masks the secrets it
+    # already knows about. Applies to reporting surfaces, never to SARIF.
+    enabled: bool = True
+    placeholder: str = "***"
+    extra_patterns: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Config:
     # Cross-kit owner/project metadata (shared with bos-marketplace-kit).
     owner: str = ""
@@ -183,6 +193,7 @@ class Config:
     scan: ScanConfig = field(default_factory=ScanConfig)
     posture: PostureConfig = field(default_factory=PostureConfig)
     remediation: RemediationConfig = field(default_factory=RemediationConfig)
+    redaction: RedactionConfig = field(default_factory=RedactionConfig)
 
     # Highest-precedence user config path (empty for Marketplace-only config).
     source_path: str = ""
@@ -385,6 +396,7 @@ def _from_dict(
     scan = _scan_from_dict(_dict(doc, "scan"))
     posture = _posture_from_dict(_dict(doc, "posture"))
     remediation = _remediation_from_dict(_dict(doc, "remediation"))
+    redaction = _redaction_from_dict(_dict(doc, "redaction"))
 
     return Config(
         owner=owner,
@@ -393,6 +405,7 @@ def _from_dict(
         scan=scan,
         posture=posture,
         remediation=remediation,
+        redaction=redaction,
         source_path=source_path,
         source_paths=source_paths,
     )
@@ -539,6 +552,15 @@ def _remediation_from_dict(d: dict[str, Any]) -> RemediationConfig:
         ai_findings_summary_provider=_str(d, "ai_findings_summary_provider", "auto"),
         local_heuristic_fallback=_bool(d, "local_heuristic_fallback", True),
         auto_enable_secret_scanning=_bool(d, "auto_enable_secret_scanning", False),
+    )
+
+
+def _redaction_from_dict(d: dict[str, Any]) -> RedactionConfig:
+    placeholder = _str(d, "placeholder", "***") or "***"
+    return RedactionConfig(
+        enabled=_bool(d, "enabled", True),
+        placeholder=placeholder,
+        extra_patterns=_str_tuple(d, "extra_patterns"),
     )
 
 

@@ -597,6 +597,11 @@ runs:
         config_spec.loader.exec_module(config_module)
         resolve_config = config_module.resolve
 
+        import redaction as redaction_module
+
+        # Default-on, so a later config-resolution failure still redacts.
+        redactor = redaction_module.build()
+
         def md_escape(value):
             return str(value).replace("|", "\\|").replace("\n", " ")
 
@@ -863,6 +868,11 @@ runs:
             use_global_config=use_global_value,
             use_marketplace_config=use_marketplace_value,
           )
+          redactor = redaction_module.build(
+            enabled=resolved_config.redaction.enabled,
+            placeholder=resolved_config.redaction.placeholder,
+            extra_patterns=resolved_config.redaction.extra_patterns,
+          )
           remediation = resolved_config.remediation
           if remediation.enable_ai_findings_summary:
             provider = detect_provider(remediation.ai_findings_summary_provider)
@@ -884,6 +894,28 @@ runs:
           ("AI triage summary", ai_status,
            "Uses GitHub Models when available; configure or disable it in layered remediation settings.")
         )
+        config_rows.append(
+          ("Report redaction", "enabled" if redactor.enabled else "disabled",
+           "Credential-shaped text in logs, summaries, and uploaded reports is replaced with a placeholder. "
+           "SARIF keeps full fidelity for the permission-gated Security tab.")
+        )
+
+        # Redact every publicly readable surface. SARIF is deliberately
+        # excluded: it lands in code scanning, which is permission gated.
+        if redactor.enabled:
+          rows = [(label, result, redactor.redact(detail)) for label, result, detail in rows]
+          for collection in (all_annotations, scanner_annotations, attention_rows):
+            for entry in collection:
+              entry["message"] = redactor.redact(entry.get("message", ""))
+              entry["recommendation"] = redactor.redact(entry.get("recommendation", ""))
+          for bucket in (posture_passed, posture_skipped):
+            for entry in bucket:
+              entry["message"] = redactor.redact(entry.get("message", ""))
+          for skip_entry in skips:
+            skip_entry["message"] = redactor.redact(skip_entry.get("message", ""))
+          verdict = redactor.redact(verdict)
+          if ai_summary:
+            ai_summary = redactor.redact(ai_summary)
 
         report_recommendations = []
         if any(r["severity"] in ("error", "fail") for r in attention_rows) or any(r["severity"] == "error" for r in all_annotations):

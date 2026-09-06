@@ -17,6 +17,7 @@ template drift between local dry-run and CI.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -27,6 +28,7 @@ import config as cfg_mod
 import detect as detect_mod
 import metadata as metadata_mod
 import posture as posture_mod
+import redaction as redaction_mod
 import sarif as sarif_mod
 from _version import __version__
 
@@ -255,9 +257,18 @@ def cmd_posture(args: argparse.Namespace) -> int:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
-    _print_posture_table(result)
+    redactor = redaction_mod.build(
+        enabled=config.redaction.enabled,
+        placeholder=config.redaction.placeholder,
+        extra_patterns=config.redaction.extra_patterns,
+    )
+    report_result = _redact_result(result, redactor)
+
+    _print_posture_table(report_result)
 
     if args.sarif:
+        # SARIF keeps full fidelity: code scanning alerts are permission
+        # gated, and a responder needs the unredacted evidence there.
         run = sarif_mod.posture_run(list(result.findings))
         log = sarif_mod.merge({"runs": [run]})
         sarif_mod.dump(log, Path(args.sarif))
@@ -269,14 +280,14 @@ def cmd_posture(args: argparse.Namespace) -> int:
         # so the outer composite has no other way to learn that probes
         # ran in indeterminate mode.
         skip_payload = {
-            "findings": [f.to_dict() for f in result.findings],
+            "findings": [f.to_dict() for f in report_result.findings],
             "skips": [
                 {
                     "rule_id": f.rule_id,
                     "message": f.message,
                     "location": f.location or "",
                 }
-                for f in result.findings
+                for f in report_result.findings
                 if f.severity == "skip"
             ],
         }
@@ -292,7 +303,7 @@ def cmd_posture(args: argparse.Namespace) -> int:
     if args.recommendations_json:
         recommendations = [
             f.recommendation_dict()
-            for f in result.findings
+            for f in report_result.findings
             if f.severity != "pass" and f.remediation.strip()
         ]
         Path(args.recommendations_json).write_text(
@@ -304,7 +315,7 @@ def cmd_posture(args: argparse.Namespace) -> int:
             f"({len(recommendations)} recommendation(s))\n"
         )
 
-    _write_step_summary(result)
+    _write_step_summary(report_result)
 
     if args.fail_on == "never":
         return 0
@@ -467,6 +478,32 @@ def _print_posture_table(result: posture_mod.AuditResult) -> None:
             "skip = the audit could not run this check (typically a token-scope "
             "limitation — supply a PAT via `github_token:` to upgrade to pass/fail).",
             _DIM, enabled=color))
+
+
+def _redact_finding(
+    finding: posture_mod.Finding, redactor: redaction_mod.Redactor
+) -> posture_mod.Finding:
+    return dataclasses.replace(
+        finding,
+        message=redactor.redact(finding.message),
+        title=redactor.redact(finding.title),
+        remediation=redactor.redact(finding.remediation),
+        evidence={
+            key: redactor.redact(value)
+            for key, value in (finding.evidence or {}).items()
+        },
+    )
+
+
+def _redact_result(
+    result: posture_mod.AuditResult, redactor: redaction_mod.Redactor
+) -> posture_mod.AuditResult:
+    """Return the result as it should appear in publicly readable reporting."""
+    if not redactor.enabled:
+        return result
+    return posture_mod.AuditResult(
+        findings=tuple(_redact_finding(f, redactor) for f in result.findings)
+    )
 
 
 def _write_step_summary(result: posture_mod.AuditResult) -> None:

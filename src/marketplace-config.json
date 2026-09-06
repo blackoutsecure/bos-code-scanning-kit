@@ -38,6 +38,11 @@
       "ai_findings_summary_provider": "auto",
       "local_heuristic_fallback": true,
       "auto_enable_secret_scanning": false
+    },
+    "redaction": {
+      "enabled": true,
+      "placeholder": "***",
+      "extra_patterns": []
     }
   }
 }

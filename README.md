@@ -599,7 +599,27 @@ remediation:
   ai_findings_summary_provider: auto # auto | none | github-models | external name
   local_heuristic_fallback: true
   auto_enable_secret_scanning: false # explicit opt-in; requires an entitled repo + Administration: write
+
+redaction:
+  enabled: true # replace credential-shaped text in reports and logs
+  placeholder: "***"
+  extra_patterns: [] # additional regexes, e.g. internal ticket or host formats
 ```
+
+### Report redaction
+
+On a public repository the run log, the job summary, and every uploaded
+artifact are readable by anyone. GitHub masks only the secrets it issued
+(repository and organization secrets) and does not mask artifacts at all, so
+a credential a scanner *discovers* would otherwise be published verbatim.
+
+`redaction` is enabled by the bundled Marketplace baseline, so every consumer
+gets it without configuring anything. It applies to the console output, the
+job summary, the JSON report, and the recommendations sidecar. It is
+deliberately **not** applied to the SARIF uploaded to code scanning: those
+alerts are permission-gated, and a responder needs the unredacted evidence to
+triage. Redaction never changes a finding's severity, the audit verdict, or
+the exit code.
 
 `msdo_coverage: codeless` records that the organization uses Microsoft
 Defender for Cloud's codeless DevOps scanning. The kit cannot verify that
