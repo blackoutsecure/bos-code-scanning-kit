@@ -12,6 +12,8 @@ import pytest
 import cli as cli_mod
 from _version import __version__
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
 # ---------------------------------------------------------------------------
 # version + --version
 # ---------------------------------------------------------------------------
@@ -29,6 +31,14 @@ def test_top_level_version_flag(capsys):
         cli_mod.main(["--version"])
     assert exc.value.code == 0
     assert __version__ in capsys.readouterr().out
+
+
+def test_action_sync_guard_reads_repository_files_as_utf8():
+    """The metadata guard must be portable to Windows' legacy code pages."""
+    guard = (REPO_ROOT / "scripts" / "check_action_sync.py").read_text(encoding="utf-8")
+    assert 'ACTION_YML.read_text(encoding="utf-8")' in guard
+    assert 'PYPROJECT.read_text(encoding="utf-8")' in guard
+    assert 'VERSION_PY.read_text(encoding="utf-8")' in guard
 
 
 # ---------------------------------------------------------------------------

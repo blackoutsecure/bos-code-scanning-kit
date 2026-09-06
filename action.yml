@@ -308,20 +308,32 @@ runs:
             ;;
         esac
         AL_TARBALL="actionlint_${AL_VERSION}_linux_${al_arch}.tar.gz"
-        curl -sSLo /tmp/actionlint.tar.gz \
-          "https://github.com/rhysd/actionlint/releases/download/v${AL_VERSION}/${AL_TARBALL}"
-        tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+        download_exit=0
+        if ! curl -sSLo /tmp/actionlint.tar.gz \
+          "https://github.com/rhysd/actionlint/releases/download/v${AL_VERSION}/${AL_TARBALL}"; then
+          download_exit=1
+        fi
+        if [[ "${download_exit}" -eq 0 ]]; then
+          if ! tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint; then
+            download_exit=1
+          fi
+        fi
         # Run with SARIF output (actionlint has built-in SARIF since v1.7).
         # `|| true` because we collect findings even on non-zero so the
         # merge step always runs.
-        /tmp/actionlint -format '{{sarif .}}' \
-          > "${GITHUB_WORKSPACE}/bos-scan-actionlint.sarif" 2>/dev/null || true
+        if [[ "${download_exit}" -eq 0 ]]; then
+          /tmp/actionlint -format '{{sarif .}}' \
+            > "${GITHUB_WORKSPACE}/bos-scan-actionlint.sarif" 2>/dev/null || true
+        fi
         # If the template isn't supported in this version, fall back to
-        # a minimal empty SARIF so the merge step doesn't break.
+        # a minimal empty SARIF so the merge step doesn't break. Record
+        # this as an execution failure so the summary cannot call it clean.
         if ! head -c1 "${GITHUB_WORKSPACE}/bos-scan-actionlint.sarif" | grep -q '{'; then
           printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"actionlint"}}, "results":[]}]}\n' \
             > "${GITHUB_WORKSPACE}/bos-scan-actionlint.sarif"
+          download_exit=1
         fi
+        echo "exit_code=${download_exit}" >> "${GITHUB_OUTPUT}"
 
     # ----- 3b. gitleaks (secrets) ---------------------------------------
     - id: gitleaks
@@ -339,22 +351,38 @@ runs:
             gl_arch=x64
             ;;
         esac
-        curl -sSLo /tmp/gitleaks.tar.gz \
-          "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_${gl_arch}.tar.gz"
-        tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
-        chmod +x /tmp/gitleaks
+        download_exit=0
+        if ! curl -sSLo /tmp/gitleaks.tar.gz \
+          "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_${gl_arch}.tar.gz"; then
+          download_exit=1
+        fi
+        if [[ "${download_exit}" -eq 0 ]]; then
+          if ! tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks; then
+            download_exit=1
+          fi
+        fi
+        if [[ "${download_exit}" -eq 0 ]]; then
+          if ! chmod +x /tmp/gitleaks; then
+            download_exit=1
+          fi
+        fi
         # `detect` over the working tree — no `--no-git` so historical
         # blobs are scanned where available.
-        /tmp/gitleaks detect \
-          --source "${GITHUB_WORKSPACE}" \
-          --report-format sarif \
-          --report-path  "${GITHUB_WORKSPACE}/bos-scan-gitleaks.sarif" \
-          --no-banner --exit-code 0 || true
-        # Guarantee a SARIF file exists.
+        if [[ "${download_exit}" -eq 0 ]]; then
+          /tmp/gitleaks detect \
+            --source "${GITHUB_WORKSPACE}" \
+            --report-format sarif \
+            --report-path  "${GITHUB_WORKSPACE}/bos-scan-gitleaks.sarif" \
+            --no-banner --exit-code 0 || download_exit=$?
+        fi
+        # Guarantee a SARIF file exists while preserving the failed
+        # execution state for the deferred enforcement step.
         if [[ ! -s "${GITHUB_WORKSPACE}/bos-scan-gitleaks.sarif" ]]; then
           printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"gitleaks"}}, "results":[]}]}\n' \
             > "${GITHUB_WORKSPACE}/bos-scan-gitleaks.sarif"
+          download_exit=1
         fi
+        echo "exit_code=${download_exit}" >> "${GITHUB_OUTPUT}"
 
     # ----- 3c. shellcheck (only if shell scripts detected) --------------
     - id: shellcheck
@@ -375,8 +403,11 @@ runs:
             sc_arch=x86_64
             ;;
         esac
-        curl -sSLo /tmp/shellcheck.tar.xz \
-          "https://github.com/koalaman/shellcheck/releases/download/v${SC_VERSION}/shellcheck-v${SC_VERSION}.linux.${sc_arch}.tar.xz"
+        download_exit=0
+        if ! curl -sSLo /tmp/shellcheck.tar.xz \
+          "https://github.com/koalaman/shellcheck/releases/download/v${SC_VERSION}/shellcheck-v${SC_VERSION}.linux.${sc_arch}.tar.xz"; then
+          download_exit=1
+        fi
         # Extract via Python's stdlib `lzma` + `tarfile` rather than
         # `tar -xJf`. The shellcheck release tarballs are only published
         # in `.tar.xz` form, and minimal / self-hosted runners (e.g.
@@ -388,7 +419,8 @@ runs:
         # further down already requires. Honors the explicit
         # "avoids `sudo apt-get` ... fails on minimal / self-hosted
         # / non-Debian runners" design intent stated above.
-        python3 - <<'PY'
+        if [[ "${download_exit}" -eq 0 ]]; then
+        if ! python3 - <<'PY'
         import tarfile
         with tarfile.open("/tmp/shellcheck.tar.xz", "r:xz") as tf:
             try:
@@ -402,17 +434,34 @@ runs:
                 # release from a pinned tag — safe to extract as-is.
                 tf.extractall("/tmp")
         PY
+          download_exit=1
+        fi
+        fi
         SHELLCHECK="/tmp/shellcheck-v${SC_VERSION}/shellcheck"
-        chmod +x "${SHELLCHECK}"
+        if [[ "${download_exit}" -eq 0 ]]; then
+          if ! chmod +x "${SHELLCHECK}"; then
+            download_exit=1
+          fi
+        fi
         # Collect findings as JSON, then convert to SARIF via a tiny
         # Python helper (keeps us free of extra dependencies).
         cd "${GITHUB_WORKSPACE}"
-        find . -type f \( -name '*.sh' -o -name '*.bash' \) \
-          -not -path './.git/*' \
-          -not -path './node_modules/*' \
-          -not -path './vendor/*' \
-          -print0 \
-          | xargs -0 -r "${SHELLCHECK}" -f json 2>/dev/null > /tmp/shellcheck.json || true
+        if [[ "${download_exit}" -eq 0 ]]; then
+          set +e
+          find . -type f \( -name '*.sh' -o -name '*.bash' \) \
+            -not -path './.git/*' \
+            -not -path './node_modules/*' \
+            -not -path './vendor/*' \
+            -print0 \
+            | xargs -0 -r "${SHELLCHECK}" -f json 2>/dev/null > /tmp/shellcheck.json
+          scan_exit=${PIPESTATUS[1]}
+          set -e
+          # Exit 1 denotes ordinary ShellCheck findings. Larger values
+          # mean the tool could not execute or process its input.
+          if [[ "${scan_exit}" -gt 1 ]]; then
+            download_exit="${scan_exit}"
+          fi
+        fi
         python3 - <<'PY'
         import json
         import pathlib
@@ -457,6 +506,11 @@ runs:
         pathlib.Path("bos-scan-shellcheck.sarif").write_text(
             json.dumps(sarif, indent=2) + "\n")
         PY
+        if [[ "${download_exit}" -ne 0 ]]; then
+          echo "exit_code=${download_exit}" >> "${GITHUB_OUTPUT}"
+        else
+          echo "exit_code=0" >> "${GITHUB_OUTPUT}"
+        fi
 
     # ----- 4. Merge every available SARIF into one upload artefact ------
     - id: merge
@@ -517,6 +571,9 @@ runs:
         TOKEN_INPUT_SUPPLIED: ${{ inputs.github_token != '' && 'true' || 'false' }}
         SARIF_PATH: ${{ steps.merge.outputs.sarif_path }}
         POSTURE_EXIT_CODE: ${{ steps.posture.outputs.exit_code }}
+        ACTIONLINT_EXIT_CODE: ${{ steps.actionlint.outputs.exit_code }}
+        GITLEAKS_EXIT_CODE: ${{ steps.gitleaks.outputs.exit_code }}
+        SHELLCHECK_EXIT_CODE: ${{ steps.shellcheck.outputs.exit_code }}
         GITHUB_TOKEN: ${{ inputs.github_token || github.token }}
         CONFIG_PATH: ${{ inputs.config }}
         GLOBAL_CONFIG_PATH: ${{ inputs.global_config_path }}
@@ -610,10 +667,10 @@ runs:
           return rows
 
         scanners = [
-            ("Posture audit", "bos-scan-posture.sarif",    os.environ.get("ENABLE_POSTURE")  == "true"),
-            ("actionlint",    "bos-scan-actionlint.sarif", os.environ.get("ENABLE_SCANNERS") == "true"),
-            ("gitleaks",      "bos-scan-gitleaks.sarif",   os.environ.get("ENABLE_SCANNERS") == "true"),
-            ("shellcheck",    "bos-scan-shellcheck.sarif", os.environ.get("ENABLE_SCANNERS") == "true"),
+          ("Posture audit", "bos-scan-posture.sarif",    os.environ.get("ENABLE_POSTURE")  == "true", os.environ.get("POSTURE_EXIT_CODE", "")),
+          ("actionlint",    "bos-scan-actionlint.sarif", os.environ.get("ENABLE_SCANNERS") == "true", os.environ.get("ACTIONLINT_EXIT_CODE", "")),
+          ("gitleaks",      "bos-scan-gitleaks.sarif",   os.environ.get("ENABLE_SCANNERS") == "true", os.environ.get("GITLEAKS_EXIT_CODE", "")),
+          ("shellcheck",    "bos-scan-shellcheck.sarif", os.environ.get("ENABLE_SCANNERS") == "true", os.environ.get("SHELLCHECK_EXIT_CODE", "")),
         ]
 
         def counts(path):
@@ -657,7 +714,7 @@ runs:
           else:
             posture_config_error = f"posture exited {posture_exit_code} with no captured error message"
 
-        for label, name, scanner_enabled in scanners:
+        for label, name, scanner_enabled, scanner_exit_code in scanners:
             p = pathlib.Path(name)
             if not scanner_enabled:
                 rows.append((label, "skipped", "stage disabled"))
@@ -671,12 +728,18 @@ runs:
                 any_err = True
                 any_find = True
                 continue
+              if label != "Posture audit" and scanner_exit_code not in ("", "0"):
+                  rows.append((label, "failure", f"scanner setup or execution failed (exit {scanner_exit_code})"))
+                  any_err = True
+                  any_find = True
+                  continue
             if not p.exists() or p.stat().st_size == 0:
                 rows.append((label, "skipped", "no SARIF produced"))
                 continue
             c = counts(p)
             if c is None:
                 rows.append((label, "warn", "SARIF unreadable"))
+              any_find = True
                 continue
             e, w, n = c
             if e:
@@ -761,7 +824,7 @@ runs:
         ]
 
         all_annotations = []
-        for source, sarif_name, stage_enabled in scanners:
+        for source, sarif_name, stage_enabled, _scanner_exit_code in scanners:
             if stage_enabled:
                 all_annotations.extend(sarif_results(source, sarif_name))
 

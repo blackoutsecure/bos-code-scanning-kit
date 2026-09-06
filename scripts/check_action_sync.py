@@ -79,9 +79,9 @@ def _read_python_version(text: str) -> str:
 def main() -> int:
     failures: list[str] = []
 
-    action = yaml.safe_load(ACTION_YML.read_text())
-    pyproject_text = PYPROJECT.read_text()
-    version_text = VERSION_PY.read_text()
+    action = yaml.safe_load(ACTION_YML.read_text(encoding="utf-8"))
+    pyproject_text = PYPROJECT.read_text(encoding="utf-8")
+    version_text = VERSION_PY.read_text(encoding="utf-8")
     package_name = _read_pyproject_field(pyproject_text, "name")
     package_version = _read_pyproject_field(pyproject_text, "version")
     source_version = _read_python_version(version_text)
