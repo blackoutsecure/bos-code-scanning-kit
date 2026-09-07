@@ -32,6 +32,7 @@ class FakeGitHub(posture_mod.GitHub):
         self.timeout = 1
         self.responses = responses
         self.calls: list[str] = []
+        self.last_accepted_permissions = ""
 
     def get_or_none(self, path, *, accept="application/vnd.github+json"):
         self.calls.append(path)
@@ -325,6 +326,17 @@ def test_ps013_no_workflow_dir(tmp_path: Path):
     target = [f for f in findings if f.rule_id == "PS013"]
     assert target and target[0].severity == "warn"
     assert "no `.github/workflows/` directory" in target[0].message
+
+
+def test_ps003_403_includes_safe_accepted_permissions_hint(tmp_path: Path):
+    """A 403 exposes only GitHub's permission hint, never an API body."""
+    fake = FakeGitHub({"/repos/o/r/vulnerability-alerts": (None, 403)})
+    fake.last_accepted_permissions = "vulnerability alerts:read, administration:read"
+    cfg = Config(posture=PostureConfig(ghas=GHASPosture()))
+    findings = posture_mod._audit_ghas(fake, "o", "r", cfg.posture.ghas)
+    target = [f for f in findings if f.rule_id == "PS003"]
+    assert target and "vulnerability alerts:read" in target[0].remediation
+    assert "response body" not in target[0].remediation
 
 
 # ---------------------------------------------------------------------------

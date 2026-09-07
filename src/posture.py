@@ -527,6 +527,7 @@ class GitHub:
             )
         self.token = token
         self.timeout = timeout
+        self.last_accepted_permissions = ""
 
     # GET; returns parsed JSON or None on 404.
     def get(self, path: str, *, accept: str = "application/vnd.github+json") -> Any:
@@ -591,11 +592,17 @@ class GitHub:
         for attempt in range(3):
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    self.last_accepted_permissions = resp.headers.get(
+                        "X-Accepted-GitHub-Permissions", ""
+                    )
                     raw = resp.read()
                     if not raw:
                         return None
                     return json.loads(raw.decode("utf-8"))
             except urllib.error.HTTPError as exc:
+                self.last_accepted_permissions = exc.headers.get(
+                    "X-Accepted-GitHub-Permissions", ""
+                )
                 # 5xx → retry; 4xx → fail fast with friendly message.
                 if 500 <= exc.code < 600 and attempt < 2:
                     last_exc = exc
@@ -1182,13 +1189,18 @@ def _audit_ghas(
             ))
         elif status == 403:
             # Token-scope limitation — see PS001 comment above.
+            accepted_permissions = getattr(gh, "last_accepted_permissions", "").strip()
+            permission_hint = (
+                f" GitHub accepted-permissions hint: `{accepted_permissions}`."
+                if accepted_permissions else ""
+            )
             out.append(Finding(
                 "PS003", "skip",
                 "Dependabot probe forbidden — token cannot read vulnerability-alert settings (403)",
                 remediation=(
                     "Use a GitHub App installation token with Dependabot alerts: read and repository Administration: read "
                     "access, then rerun the audit. A scoped SCANNING_PAT is a legacy fallback. If the setting is then confirmed disabled, enable "
-                    "Dependabot alerts in Settings → Code security."
+                    f"Dependabot alerts in Settings → Code security.{permission_hint}"
                 ),
             ))
         else:
