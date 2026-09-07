@@ -93,8 +93,9 @@ class WorkflowsPosture:
     # the row only shows up in the skips JSON sidecar). Flip to
     # `"warn"` or `"fail"` to require MSDO across the org.
     detect_msdo: str = "skip"
-    # `codeless` records coverage supplied by a Microsoft Defender for Cloud
-    # connector. It cannot be verified from checkout files, unlike `action`.
+    # `codeless` is the compatibility key for Microsoft Defender for Cloud's
+    # agentless code scanning connector. It cannot be verified from checkout
+    # files, unlike `action`.
     msdo_coverage: str = "auto"
 
 

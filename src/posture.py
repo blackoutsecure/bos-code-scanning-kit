@@ -801,9 +801,9 @@ def _scan_msdo(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
     """PS013 — assess Microsoft Security DevOps coverage.
 
     `action` and `auto` inspect local workflow files for the MSDO action.
-    Codeless Microsoft Defender for Cloud scanning has no repository-local
+    Microsoft Defender for Cloud agentless scanning has no repository-local
     artifact, so it must be declared as `msdo_coverage: codeless`; this action
-    intentionally does not claim to verify external Azure connector state.
+    intentionally does not claim to verify external connector state.
 
     The MSDO action is a meta-
     runner bundling Microsoft's OSS analyzers (Bandit / BinSkim / Trivy /
@@ -823,7 +823,8 @@ def _scan_msdo(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
     if cfg.msdo_coverage == "codeless":
         out.append(Finding(
             "PS013", "pass",
-            "Microsoft Security DevOps codeless coverage declared via Microsoft Defender for Cloud; "
+            "Microsoft Defender for Cloud codeless coverage declared (agentless code scanning) via "
+            "`msdo_coverage: codeless`; "
             "external connector state cannot be verified from repository files",
         ))
         return out
@@ -884,10 +885,11 @@ def _scan_msdo(repo_root: Path, cfg: WorkflowsPosture) -> list[Finding]:
         out.append(Finding(
             "PS013", cfg.detect_msdo,
             "Microsoft Security DevOps action (`microsoft/security-devops-action`) "
-            "not detected in any workflow. Codeless Defender for Cloud coverage cannot be "
-            "detected from repository files; set `posture.workflows.msdo_coverage: codeless` "
-            "when the organization is connected. Otherwise consider adding the action for OSS "
-            "analyzer coverage (Bandit / BinSkim / Trivy / Terrascan / Template-Analyzer / ESLint).",
+            "not detected in any workflow. Microsoft Defender for Cloud agentless coverage "
+            "cannot be detected from repository files; set `posture.workflows.msdo_coverage: codeless` "
+            "when the GitHub connector is enabled. Otherwise consider adding the action for "
+            "in-pipeline, near-real-time OSS analyzer coverage (Bandit / BinSkim / Trivy / Terrascan / "
+            "Template-Analyzer / ESLint).",
         ))
 
     return out

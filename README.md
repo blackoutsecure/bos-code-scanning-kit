@@ -567,9 +567,9 @@ posture:
     require_pinned_actions: warn # PS012 - fail | warn | skip
     allow_tag_pin: [] # owner/repo entries exempted from PS012 (e.g. ['actions/checkout'])
     detect_msdo: skip
-    # auto detects only a checked-in MSDO action. Codeless Defender for Cloud
-    # coverage is external, so declare it explicitly after onboarding.
-    msdo_coverage: auto # auto | action | codeless
+    # auto detects only a checked-in MSDO action. Microsoft Defender for Cloud
+    # agentless coverage is external, so declare it explicitly after onboarding.
+    msdo_coverage: auto # auto | action | codeless (agentless)
 
   branches:
     main:
@@ -622,13 +622,17 @@ triage. Redaction never changes a finding's severity, the audit verdict, or
 the exit code.
 
 `msdo_coverage: codeless` records that the organization uses Microsoft
-Defender for Cloud's codeless DevOps scanning. The kit cannot verify that
-external Azure connector from a repository checkout, so confirm connector
-status and repository discovery in
+Defender for Cloud's **agentless code scanning (Preview)**. The kit cannot
+verify the external GitHub connector, repository scope, scanner selection, or
+scan freshness from a repository checkout, so confirm connector status and
+repository discovery in
 [Defender for Cloud](https://learn.microsoft.com/en-us/azure/defender-for-cloud/quickstart-onboard-github).
 Use `auto` when the kit should detect a checked-in
-`microsoft/security-devops-action` workflow instead; use `action` when that
-workflow is required by policy.
+`microsoft/security-devops-action` workflow instead; use `action` when
+in-pipeline, near-real-time feedback, build gating, binary/container coverage,
+or custom scanner configuration is required. Agentless scanning runs outside
+CI/CD, scans the default branch on a scheduled cadence, and cannot fail a
+workflow.
 
 Unknown keys are ignored so future kit versions and other sections in a
 universal config do not break existing callers. Set
