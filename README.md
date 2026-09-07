@@ -611,7 +611,7 @@ redaction:
 On a public repository the run log, the job summary, and every uploaded
 artifact are readable by anyone. GitHub masks only the secrets it issued
 (repository and organization secrets) and does not mask artifacts at all, so
-a credential a scanner *discovers* would otherwise be published verbatim.
+a credential a scanner _discovers_ would otherwise be published verbatim.
 
 `redaction` is enabled by the bundled Marketplace baseline, so every consumer
 gets it without configuring anything. It applies to the console output, the
@@ -734,6 +734,7 @@ ruff check src test
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 <!-- >>> managed-file-sync:security_readme_pointer >>> -->
+
 ## Security & secrets
 
 This repository is built with Blackout Secure's reusable GitHub Actions
@@ -743,4 +744,5 @@ Hub/Cloudflare/Balena setup walkthroughs), see the
 ["Secrets pipelining strategy"](https://github.com/blackoutsecure/bos-automation-hub#secrets-pipelining-strategy)
 section of `bos-automation-hub`. To report a vulnerability, see
 [SECURITY.md](https://github.com/blackoutsecure/.github/blob/main/SECURITY.md).
+
 <!-- <<< managed-file-sync:security_readme_pointer <<< -->
