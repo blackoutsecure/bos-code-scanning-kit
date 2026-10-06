@@ -9,8 +9,8 @@
   ],
   "source": "https://opensource.org/licenses",
   "spdx_source": "https://github.com/spdx/license-list-data",
-  "spdx_license_list_version": "24b4ed8",
-  "snapshot": "2026-08-29",
+  "spdx_license_list_version": "3.29.0",
+  "snapshot": "2026-10-06",
   "licenses": {
     "0BSD": {
       "name": "BSD Zero Clause License",
@@ -340,6 +340,14 @@
       "deprecated": false,
       "osi_only": false
     },
+    "CNRI-Python-GPL-Compatible": {
+      "name": "CNRI Python Open Source GPL Compatible License Agreement",
+      "category": "legacy",
+      "reciprocity": "permissive",
+      "prefer": null,
+      "deprecated": false,
+      "osi_only": false
+    },
     "CPAL-1.0": {
       "name": "Common Public Attribution License 1.0",
       "category": "uncategorized",
@@ -370,7 +378,7 @@
       "reciprocity": "permissive",
       "prefer": null,
       "deprecated": false,
-      "osi_only": true
+      "osi_only": false
     },
     "ECL-1.0": {
       "name": "Educational Community License v1.0",
@@ -1055,6 +1063,14 @@
     "Python-2.0": {
       "name": "Python License 2.0",
       "category": "non-reusable",
+      "reciprocity": "permissive",
+      "prefer": null,
+      "deprecated": false,
+      "osi_only": false
+    },
+    "Python-2.0.1": {
+      "name": "Python License 2.0.1",
+      "category": "legacy",
       "reciprocity": "permissive",
       "prefer": null,
       "deprecated": false,

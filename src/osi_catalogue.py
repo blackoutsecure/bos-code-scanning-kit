@@ -197,7 +197,7 @@ class Copyright(NamedTuple):
 
 def format_years(years: tuple[int, ...] | list[int]) -> str:
     """Render years as compact ranges: (2019,2020,2021,2024) -> '2019-2021, 2024'."""
-    ordered = sorted(set(int(y) for y in years))
+    ordered = sorted({int(y) for y in years})
     if not ordered:
         return ""
     spans: list[str] = []
