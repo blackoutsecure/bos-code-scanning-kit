@@ -420,7 +420,7 @@ runs:
         # "avoids `sudo apt-get` ... fails on minimal / self-hosted
         # / non-Debian runners" design intent stated above.
         if [[ "${download_exit}" -eq 0 ]]; then
-        if ! python3 - <<'PY'
+        if ! python3 - <<'PY'; then
         import tarfile
         with tarfile.open("/tmp/shellcheck.tar.xz", "r:xz") as tf:
             try:
@@ -733,18 +733,18 @@ runs:
                 any_err = True
                 any_find = True
                 continue
-              if label != "Posture audit" and scanner_exit_code not in ("", "0"):
-                  rows.append((label, "failure", f"scanner setup or execution failed (exit {scanner_exit_code})"))
-                  any_err = True
-                  any_find = True
-                  continue
+            if label != "Posture audit" and scanner_exit_code not in ("", "0"):
+                rows.append((label, "failure", f"scanner setup or execution failed (exit {scanner_exit_code})"))
+                any_err = True
+                any_find = True
+                continue
             if not p.exists() or p.stat().st_size == 0:
                 rows.append((label, "skipped", "no SARIF produced"))
                 continue
             c = counts(p)
             if c is None:
                 rows.append((label, "warn", "SARIF unreadable"))
-              any_find = True
+                any_find = True
                 continue
             e, w, n = c
             if e:
