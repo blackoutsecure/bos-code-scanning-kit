@@ -6,7 +6,7 @@ Audits, in one pass against the GitHub REST API:
     Workflow permissions       Every workflow has a `permissions:` block,
     (PS010-011)                no `permissions: write-all` (incl. job-level).
     Branch protection          Required reviews, signed commits, force-push,
-    (PS020-024)                status checks, conversation resolution.
+    (PS020-025)                status checks, conversation resolution.
     CODEOWNERS                 File present, syntactically valid, optionally
     (PS030-031)                API-verifies referenced users/teams.
 
@@ -28,6 +28,7 @@ import json
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -549,11 +550,9 @@ class GitHub:
         try:
             return self.get(path, accept=accept), 200
         except GitHubError as exc:
-            msg = str(exc)
-            if "404" in msg:
-                return None, 404
-            if "403" in msg:
-                return None, 403
+            cause = exc.__cause__
+            if isinstance(cause, urllib.error.HTTPError) and cause.code in (403, 404):
+                return None, cause.code
             raise
 
     def patch(self, path: str, payload: dict[str, Any]) -> Any:
@@ -1266,7 +1265,7 @@ def _audit_ghas(
 
 
 # ---------------------------------------------------------------------------
-# PS020-024 — Branch protection
+# PS020-025 — Effective classic and ruleset branch protection
 # ---------------------------------------------------------------------------
 
 def _audit_branches(
@@ -1281,6 +1280,26 @@ def _audit_branches(
     return out
 
 
+def _active_branch_rules(
+    gh: GitHub, owner: str, repo: str, branch: str,
+) -> tuple[list[dict[str, Any]] | None, int]:
+    rules: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        body, status = gh.get_or_none(
+            f"/repos/{owner}/{repo}/rules/branches/{branch}?per_page=100&page={page}"
+        )
+        if status != 200 or not isinstance(body, list):
+            return None, status
+        for rule in body:
+            if not isinstance(rule, dict) or not isinstance(rule.get("type"), str) or not rule["type"]:
+                return None, 200
+            rules.append(rule)
+        if len(body) < 100:
+            return rules, 200
+        page += 1
+
+
 def _audit_one_branch(
     gh: GitHub,
     owner: str,
@@ -1290,12 +1309,8 @@ def _audit_one_branch(
 ) -> list[Finding]:
     out: list[Finding] = []
     loc = f"branch:{branch}"
-    body, status = gh.get_or_none(f"/repos/{owner}/{repo}/branches/{branch}/protection")
-
-    if status == 404:
-        out.append(Finding("PS020", want.severity,
-                           f"branch `{branch}` has no protection rules", location=loc))
-        return out
+    branch_path = urllib.parse.quote(branch, safe="")
+    body, status = gh.get_or_none(f"/repos/{owner}/{repo}/branches/{branch_path}/protection")
 
     if status == 403:
         out.append(Finding(
@@ -1311,15 +1326,85 @@ def _audit_one_branch(
         ))
         return out
 
-    if status != 200 or not isinstance(body, dict):
+    if status not in (200, 404) or (status == 200 and (not isinstance(body, dict) or not body)):
         out.append(Finding("PS020", "error",
                            f"could not read protection for `{branch}` (status {status})",
                            location=loc))
         return out
 
-    # PS021 — required reviews
+    classic_protected = status == 200
+    if not classic_protected:
+        body = {}
+    rules, rules_status = _active_branch_rules(gh, owner, repo, branch_path)
+    if rules_status == 403:
+        return [Finding(
+            "PS020", "skip",
+            f"branch `{branch}` effective rules check was forbidden — token scope is insufficient",
+            location=loc,
+            remediation=(
+                "Ensure the audit token can read both classic branch protection and active "
+                "applicable branch rules. A repository-scoped GitHub App token is preferred; "
+                "SCANNING_PAT is the legacy fallback."
+            ),
+        )]
+    if rules is None:
+        return [Finding(
+            "PS020", "error",
+            f"could not read active protection rules for `{branch}` (status {rules_status}, invalid or unavailable response)",
+            location=loc,
+        )]
+
+    # This endpoint includes active inherited rules, but also repository lifecycle
+    # controls and automatic Copilot reviews, neither of which protects a branch.
+    rule_types = {rule["type"] for rule in rules}
+    has_branch_rules = any(
+        not kind.startswith("repository_") and kind != "copilot_code_review"
+        for kind in rule_types
+    )
+    if not classic_protected and not has_branch_rules:
+        return [Finding("PS020", want.severity,
+                        f"branch `{branch}` has no protection rules", location=loc)]
+
     reviews = body.get("required_pull_request_reviews") or {}
     actual_reviews = int(reviews.get("required_approving_review_count", 0))
+    checks = body.get("required_status_checks") or {}
+    has_checks = bool(checks.get("contexts") or checks.get("checks"))
+    allow_force = (body.get("allow_force_pushes") or {}).get("enabled", False)
+    force_restricted = (
+        classic_protected and not allow_force
+    ) or "non_fast_forward" in rule_types
+    sig = (
+        (body.get("required_signatures") or {}).get("enabled", False)
+        or "required_signatures" in rule_types
+    )
+    convo = (body.get("required_conversation_resolution") or {}).get("enabled", False)
+    for rule in rules:
+        kind = rule["type"]
+        if kind not in ("pull_request", "required_status_checks"):
+            continue
+        parameters = rule.get("parameters")
+        invalid = f"invalid {kind} parameters in active protection rules for `{branch}`"
+        if not isinstance(parameters, dict):
+            return [Finding("PS020", "error", invalid, location=loc)]
+        if kind == "pull_request":
+            count = parameters.get("required_approving_review_count")
+            resolution = parameters.get("required_review_thread_resolution", False)
+            if type(count) is not int or count < 0 or type(resolution) is not bool:
+                return [Finding("PS020", "error", invalid, location=loc)]
+            actual_reviews = max(actual_reviews, count)
+            convo = convo or resolution
+        else:
+            required = parameters.get("required_status_checks")
+            if not isinstance(required, list) or any(
+                not isinstance(check, dict)
+                or not isinstance(check.get("context"), str)
+                or not check["context"].strip()
+                for check in required
+            ):
+                return [Finding("PS020", "error", invalid, location=loc)]
+            has_checks = has_checks or bool(required)
+
+    # PS021 — required reviews
     if actual_reviews >= want.required_reviews:
         out.append(Finding("PS021", "pass",
                            f"required reviews: {actual_reviews} (>= {want.required_reviews})",
@@ -1332,9 +1417,8 @@ def _audit_one_branch(
         ))
 
     # PS022 — restrict force pushes
-    allow_force = (body.get("allow_force_pushes") or {}).get("enabled", False)
     if want.restrict_force_push:
-        if not allow_force:
+        if force_restricted:
             out.append(Finding("PS022", "pass",
                                "force pushes are restricted", location=loc))
         else:
@@ -1342,9 +1426,8 @@ def _audit_one_branch(
                                "force pushes are allowed", location=loc))
 
     # PS023 — required status checks
-    checks = body.get("required_status_checks") or {}
     if want.require_status_checks:
-        if checks:
+        if has_checks:
             out.append(Finding("PS023", "pass",
                                "required status checks are configured", location=loc))
         else:
@@ -1352,7 +1435,6 @@ def _audit_one_branch(
                                "no required status checks", location=loc))
 
     # PS024 — signed commits required
-    sig = (body.get("required_signatures") or {}).get("enabled", False)
     if want.require_signed_commits:
         if sig:
             out.append(Finding("PS024", "pass",
@@ -1362,7 +1444,6 @@ def _audit_one_branch(
                                "signed commits are NOT required", location=loc))
 
     # PS025 — conversation resolution
-    convo = (body.get("required_conversation_resolution") or {}).get("enabled", False)
     if want.require_conversation_resolution:
         if convo:
             out.append(Finding("PS025", "pass",

@@ -4,8 +4,12 @@ and the API-driven branch/GHAS audits exercised via a fake client.
 
 from __future__ import annotations
 
+import io
+import urllib.error
+import urllib.request
+from email.message import Message
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -50,6 +54,47 @@ class FakeGitHub(posture_mod.GitHub):
         self.calls.append(path)
         self.patch_payload = payload
         return {}
+
+
+@pytest.mark.parametrize("status,branch", [
+    (403, "issue-404"),
+    (404, "issue-403"),
+    (401, "issue-403"),
+    (500, "issue-403"),
+    (500, "issue-404"),
+])
+def test_get_or_none_classifies_http_status_not_branch_text(
+    monkeypatch: pytest.MonkeyPatch, status: int, branch: str,
+) -> None:
+    def fail(request: urllib.request.Request, *, timeout: int) -> NoReturn:
+        raise urllib.error.HTTPError(
+            request.full_url, status, "Synthetic API failure", Message(), io.BytesIO(b"{}"),
+        )
+
+    monkeypatch.setattr(posture_mod.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(posture_mod.time, "sleep", lambda _seconds: None)
+    client = posture_mod.GitHub("test-token")
+    path = f"/repos/o/r/rules/branches/{branch}?per_page=100&page=1"
+    if status in (403, 404):
+        assert client.get_or_none(path) == (None, status)
+    else:
+        with pytest.raises(posture_mod.GitHubError) as raised:
+            client.get_or_none(path)
+        assert isinstance(raised.value.__cause__, urllib.error.HTTPError)
+        assert raised.value.__cause__.code == status
+
+
+def test_get_or_none_does_not_convert_non_http_errors_with_status_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(request: urllib.request.Request, *, timeout: int) -> NoReturn:
+        raise urllib.error.URLError(f"network error for {request.full_url}")
+
+    monkeypatch.setattr(posture_mod.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(posture_mod.time, "sleep", lambda _seconds: None)
+    client = posture_mod.GitHub("test-token")
+    with pytest.raises(posture_mod.GitHubError, match="network error"):
+        client.get_or_none("/repos/o/r/rules/branches/issue-403-404")
 
 
 # ---------------------------------------------------------------------------
@@ -871,7 +916,9 @@ def _full_protection(reviews: int = 1) -> dict[str, Any]:
 
 
 def test_ps020_warns_when_branch_unprotected():
-    fake = FakeGitHub({})   # 404 for everything
+    fake = FakeGitHub({
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": ([], 200),
+    })
     out = posture_mod._audit_one_branch(fake, "o", "r", "main", BranchPosture())
     assert any(f.rule_id == "PS020" and f.severity == "warn" for f in out)
 
@@ -879,6 +926,9 @@ def test_ps020_warns_when_branch_unprotected():
 def test_ps020_skips_when_branch_protection_is_forbidden():
     fake = FakeGitHub({
         "/repos/o/r/branches/main/protection": (None, 403),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": (
+            [_review_rule(), _checks_rule(), {"type": "non_fast_forward"}], 200,
+        ),
     })
     out = posture_mod._audit_one_branch(fake, "o", "r", "main", BranchPosture())
     target = [f for f in out if f.rule_id == "PS020"]
@@ -891,6 +941,7 @@ def test_ps020_skips_when_branch_protection_is_forbidden():
 def test_ps021_pass_when_reviews_meet_threshold():
     fake = FakeGitHub({
         "/repos/o/r/branches/main/protection": (_full_protection(reviews=2), 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": ([], 200),
     })
     want = BranchPosture(required_reviews=2)
     out = posture_mod._audit_one_branch(fake, "o", "r", "main", want)
@@ -903,6 +954,7 @@ def test_ps021_pass_when_reviews_meet_threshold():
 def test_ps021_fails_when_reviews_short():
     fake = FakeGitHub({
         "/repos/o/r/branches/main/protection": (_full_protection(reviews=0), 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": ([], 200),
     })
     want = BranchPosture(required_reviews=2, severity="fail")
     out = posture_mod._audit_one_branch(fake, "o", "r", "main", want)
@@ -913,6 +965,7 @@ def test_ps021_fails_when_reviews_short():
 def test_ps024_fires_when_signed_commits_required_but_off():
     fake = FakeGitHub({
         "/repos/o/r/branches/main/protection": (_full_protection(), 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": ([], 200),
     })
     want = BranchPosture(require_signed_commits=True, severity="warn")
     out = posture_mod._audit_one_branch(fake, "o", "r", "main", want)
@@ -924,6 +977,8 @@ def test_branch_audit_iterates_all_branches():
     fake = FakeGitHub({
         "/repos/o/r/branches/main/protection": (_full_protection(reviews=1), 200),
         "/repos/o/r/branches/dev/protection": (None, 404),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": ([], 200),
+        "/repos/o/r/rules/branches/dev?per_page=100&page=1": ([], 200),
     })
     cfg_branches = {
         "main": BranchPosture(required_reviews=1, severity="fail"),
@@ -933,6 +988,219 @@ def test_branch_audit_iterates_all_branches():
     locs = {f.location for f in out}
     assert "branch:main" in locs
     assert "branch:dev" in locs
+
+
+def _review_rule(count: int = 1, *, conversations: bool = False) -> dict[str, Any]:
+    return {
+        "type": "pull_request",
+        "parameters": {
+            "required_approving_review_count": count,
+            "required_review_thread_resolution": conversations,
+        },
+        "ruleset_id": 123,
+        "ruleset_source_type": "Organization",
+        "ruleset_source": "o",
+    }
+
+
+def _checks_rule(contexts: tuple[str, ...] = ("ci",)) -> dict[str, Any]:
+    return {
+        "type": "required_status_checks",
+        "parameters": {
+            "required_status_checks": [
+                {"context": context, "integration_id": 15368} for context in contexts
+            ],
+            "strict_required_status_checks_policy": True,
+        },
+        "ruleset_id": 456,
+        "ruleset_source_type": "Enterprise",
+    }
+
+
+def test_branch_audit_combines_classic_history_with_effective_rules() -> None:
+    classic = _full_protection()
+    classic["required_pull_request_reviews"] = None
+    classic["required_status_checks"] = None
+    fake = FakeGitHub({
+        "/repos/o/r/branches/main/protection": (classic, 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": (
+            [_review_rule(conversations=True), _checks_rule()], 200,
+        ),
+    })
+    findings = posture_mod._audit_one_branch(
+        fake, "o", "r", "main", BranchPosture(require_conversation_resolution=True, severity="fail"),
+    )
+    assert {finding.rule_id: finding.severity for finding in findings} == {
+        "PS021": "pass", "PS022": "pass", "PS023": "pass", "PS025": "pass",
+    }
+    assert not any("/rulesets" in path for path in fake.calls)
+
+
+def test_branch_audit_accepts_ruleset_only_protection() -> None:
+    fake = FakeGitHub({
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": (
+            [_review_rule(2, conversations=True), _checks_rule(),
+             {"type": "non_fast_forward"}, {"type": "required_signatures"}], 200,
+        ),
+    })
+    findings = posture_mod._audit_one_branch(
+        fake, "o", "r", "main",
+        BranchPosture(required_reviews=2, require_signed_commits=True, require_conversation_resolution=True),
+    )
+    assert {finding.rule_id: finding.severity for finding in findings} == {
+        "PS021": "pass", "PS022": "pass", "PS023": "pass", "PS024": "pass", "PS025": "pass",
+    }
+
+
+def test_branch_audit_does_not_assume_rulesets_restrict_force_pushes() -> None:
+    fake = FakeGitHub({
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": (
+            [_review_rule(), _checks_rule()], 200,
+        ),
+    })
+    findings = posture_mod._audit_one_branch(fake, "o", "r", "main", BranchPosture(severity="fail"))
+    assert {finding.rule_id: finding.severity for finding in findings}["PS022"] == "fail"
+
+
+@pytest.mark.parametrize("required,expected", [(3, "pass"), (4, "fail")])
+def test_branch_audit_uses_strongest_requirement_not_sum(required: int, expected: str) -> None:
+    classic = _full_protection(2)
+    classic["allow_force_pushes"] = {"enabled": True}
+    fake = FakeGitHub({
+        "/repos/o/r/branches/main/protection": (classic, 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": (
+            [_review_rule(1), _review_rule(3), {"type": "non_fast_forward"}], 200,
+        ),
+    })
+    findings = posture_mod._audit_one_branch(
+        fake, "o", "r", "main", BranchPosture(required_reviews=required, severity="fail"),
+    )
+    by_rule = {finding.rule_id: finding for finding in findings}
+    assert by_rule["PS021"].severity == expected
+    assert "required reviews: 3" in by_rule["PS021"].message
+    assert by_rule["PS022"].severity == "pass"
+
+
+def test_branch_audit_still_reports_missing_reviews_and_empty_checks() -> None:
+    classic = _full_protection(0)
+    classic["required_status_checks"] = {"strict": True, "contexts": [], "checks": []}
+    fake = FakeGitHub({
+        "/repos/o/r/branches/main/protection": (classic, 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": (
+            [_review_rule(0), _checks_rule(())], 200,
+        ),
+    })
+    findings = posture_mod._audit_one_branch(fake, "o", "r", "main", BranchPosture(severity="fail"))
+    severities = {finding.rule_id: finding.severity for finding in findings}
+    assert severities["PS021"] == "fail"
+    assert severities["PS023"] == "fail"
+
+
+def test_branch_audit_does_not_count_repository_or_automatic_review_rules_as_protection() -> None:
+    fake = FakeGitHub({
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": (
+            [{"type": "repository_delete"}, {"type": "copilot_code_review"}], 200,
+        ),
+    })
+    findings = posture_mod._audit_one_branch(fake, "o", "r", "main", BranchPosture())
+    assert [(finding.rule_id, finding.severity) for finding in findings] == [("PS020", "warn")]
+
+
+@pytest.mark.parametrize("response,status,severity", [
+    (None, 403, "skip"),
+    (None, 404, "error"),
+    (None, 500, "error"),
+    (None, 200, "error"),
+    ({}, 200, "error"),
+    ([None], 200, "error"),
+    ([{"type": "pull_request", "parameters": {}}], 200, "error"),
+    ([{"type": "pull_request", "parameters": {"required_approving_review_count": True}}], 200, "error"),
+    ([{"type": "pull_request", "parameters": {"required_approving_review_count": -1}}], 200, "error"),
+    ([{"type": "pull_request", "parameters": {
+        "required_approving_review_count": 1, "required_review_thread_resolution": "false",
+    }}], 200, "error"),
+    ([{"type": "required_status_checks", "parameters": {"required_status_checks": "ci"}}], 200, "error"),
+    ([{"type": "required_status_checks", "parameters": {"required_status_checks": [{}]}}], 200, "error"),
+])
+def test_branch_audit_does_not_pass_when_effective_rules_are_unavailable(
+    response: Any, status: int, severity: str,
+) -> None:
+    fake = FakeGitHub({
+        "/repos/o/r/branches/main/protection": (_full_protection(), 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": (response, status),
+    })
+    findings = posture_mod._audit_one_branch(fake, "o", "r", "main", BranchPosture())
+    assert [(finding.rule_id, finding.severity) for finding in findings] == [("PS020", severity)]
+
+
+def test_branch_audit_collects_all_effective_rule_pages() -> None:
+    first_page = [{"type": "repository_create"} for _ in range(100)]
+    fake = FakeGitHub({
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": (first_page, 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=2": (
+            [_review_rule(), _checks_rule(), {"type": "non_fast_forward"}], 200,
+        ),
+    })
+    findings = posture_mod._audit_one_branch(fake, "o", "r", "main", BranchPosture())
+    assert all(finding.severity == "pass" for finding in findings)
+    assert {finding.rule_id for finding in findings} == {"PS021", "PS022", "PS023"}
+    assert fake.calls[-1].endswith("page=2")
+
+
+def test_branch_audit_does_not_use_partial_rules_after_a_forbidden_page() -> None:
+    first_page = [_review_rule(), _checks_rule()] + [{"type": "repository_create"} for _ in range(98)]
+    fake = FakeGitHub({
+        "/repos/o/r/branches/main/protection": (_full_protection(), 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": (first_page, 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=2": (None, 403),
+    })
+    findings = posture_mod._audit_one_branch(fake, "o", "r", "main", BranchPosture())
+    assert [(finding.rule_id, finding.severity) for finding in findings] == [("PS020", "skip")]
+
+
+def test_branch_audit_encodes_branch_names_in_both_api_paths() -> None:
+    fake = FakeGitHub({
+        "/repos/o/r/branches/release%2Fnext/protection": (_full_protection(), 200),
+        "/repos/o/r/rules/branches/release%2Fnext?per_page=100&page=1": ([], 200),
+    })
+    findings = posture_mod._audit_one_branch(fake, "o", "r", "release/next", BranchPosture())
+    assert {finding.rule_id for finding in findings} == {"PS021", "PS022", "PS023"}
+    assert all(finding.severity == "pass" for finding in findings)
+    assert all(finding.location == "branch:release/next" for finding in findings)
+
+
+def test_branch_audit_keeps_classic_signature_conversation_and_modern_checks() -> None:
+    classic = _full_protection()
+    classic["required_status_checks"] = {"checks": [{"context": "ci", "app_id": 15368}]}
+    classic["required_signatures"] = {"enabled": True}
+    classic["required_conversation_resolution"] = {"enabled": True}
+    fake = FakeGitHub({
+        "/repos/o/r/branches/main/protection": (classic, 200),
+        "/repos/o/r/rules/branches/main?per_page=100&page=1": ([], 200),
+    })
+    findings = posture_mod._audit_one_branch(
+        fake, "o", "r", "main",
+        BranchPosture(require_signed_commits=True, require_conversation_resolution=True),
+    )
+    assert {finding.rule_id: finding.severity for finding in findings} == {
+        "PS021": "pass", "PS022": "pass", "PS023": "pass", "PS024": "pass", "PS025": "pass",
+    }
+
+
+def test_branch_audit_preserves_explicit_client_errors() -> None:
+    class UnavailableRules(FakeGitHub):
+        def get_or_none(
+            self, path: str, *, accept: str = "application/vnd.github+json",
+        ) -> tuple[Any, int]:
+            if "/rules/branches/" in path:
+                raise posture_mod.GitHubError("network error contacting GitHub")
+            return super().get_or_none(path, accept=accept)
+
+    fake = UnavailableRules({
+        "/repos/o/r/branches/main/protection": (_full_protection(), 200),
+    })
+    with pytest.raises(posture_mod.GitHubError, match="network error contacting GitHub"):
+        posture_mod._audit_one_branch(fake, "o", "r", "main", BranchPosture())
 
 
 # ---------------------------------------------------------------------------
