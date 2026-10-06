@@ -328,6 +328,26 @@ Severities can be overridden per rule in any global or repository config tier.
 `PS000` is reserved for tooling errors (e.g. missing token) and is
 always emitted at `error` severity.
 
+### PS020-PS025 — effective branch protection
+
+Branch checks combine classic protection with all pages of GitHub's
+[active applicable branch rules](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch),
+including inherited organization and enterprise rules. Disabled and evaluation-only
+rulesets are not returned by that endpoint. Repository lifecycle rules and automatic
+Copilot review rules do not, by themselves, establish branch protection.
+
+The strongest review-count requirement wins; counts are not added together.
+Non-empty required status checks, signed-commit requirements, and conversation
+resolution can come from either source. Force pushes are restricted by classic
+protection or an applicable `non_fast_forward` rule; a ruleset's mere presence
+does not imply that restriction. Actor-specific bypass allowances are not changed
+or evaluated by these checks.
+
+A missing classic protection object is not proof that the branch is unprotected.
+Forbidden access leaves the branch **Not Assessed**. Unavailable endpoints,
+malformed rule data, and client failures remain explicit errors rather than
+falling back to a passing partial assessment. Both sources must be readable.
+
 ### LD001-LD004 — dependency licences
 
 The kit's sibling, [`bos-marketplace-kit`][mk], audits _this repository's
