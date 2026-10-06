@@ -550,11 +550,9 @@ class GitHub:
         try:
             return self.get(path, accept=accept), 200
         except GitHubError as exc:
-            msg = str(exc)
-            if "404" in msg:
-                return None, 404
-            if "403" in msg:
-                return None, 403
+            cause = exc.__cause__
+            if isinstance(cause, urllib.error.HTTPError) and cause.code in (403, 404):
+                return None, cause.code
             raise
 
     def patch(self, path: str, payload: dict[str, Any]) -> Any:

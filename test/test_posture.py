@@ -4,8 +4,12 @@ and the API-driven branch/GHAS audits exercised via a fake client.
 
 from __future__ import annotations
 
+import io
+import urllib.error
+import urllib.request
+from email.message import Message
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -50,6 +54,47 @@ class FakeGitHub(posture_mod.GitHub):
         self.calls.append(path)
         self.patch_payload = payload
         return {}
+
+
+@pytest.mark.parametrize("status,branch", [
+    (403, "issue-404"),
+    (404, "issue-403"),
+    (401, "issue-403"),
+    (500, "issue-403"),
+    (500, "issue-404"),
+])
+def test_get_or_none_classifies_http_status_not_branch_text(
+    monkeypatch: pytest.MonkeyPatch, status: int, branch: str,
+) -> None:
+    def fail(request: urllib.request.Request, *, timeout: int) -> NoReturn:
+        raise urllib.error.HTTPError(
+            request.full_url, status, "Synthetic API failure", Message(), io.BytesIO(b"{}"),
+        )
+
+    monkeypatch.setattr(posture_mod.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(posture_mod.time, "sleep", lambda _seconds: None)
+    client = posture_mod.GitHub("test-token")
+    path = f"/repos/o/r/rules/branches/{branch}?per_page=100&page=1"
+    if status in (403, 404):
+        assert client.get_or_none(path) == (None, status)
+    else:
+        with pytest.raises(posture_mod.GitHubError) as raised:
+            client.get_or_none(path)
+        assert isinstance(raised.value.__cause__, urllib.error.HTTPError)
+        assert raised.value.__cause__.code == status
+
+
+def test_get_or_none_does_not_convert_non_http_errors_with_status_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(request: urllib.request.Request, *, timeout: int) -> NoReturn:
+        raise urllib.error.URLError(f"network error for {request.full_url}")
+
+    monkeypatch.setattr(posture_mod.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(posture_mod.time, "sleep", lambda _seconds: None)
+    client = posture_mod.GitHub("test-token")
+    with pytest.raises(posture_mod.GitHubError, match="network error"):
+        client.get_or_none("/repos/o/r/rules/branches/issue-403-404")
 
 
 # ---------------------------------------------------------------------------
