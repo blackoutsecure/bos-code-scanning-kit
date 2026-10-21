@@ -82,7 +82,7 @@ jobs:
           permission-members: read
 
       - name: Check dispatcher authorization
-        uses: blackoutsecure/bos-workflow-gatekeeper@eae1fdd8ab731e72bf890fdb7c1504415d12d88c # v1.0.2
+        uses: blackoutsecure/bos-workflow-gatekeeper@c06e9fa7a60a75a3a1c8a8913b361fc39fc7dc35 # v1.0.3
         with:
           actor: ${{ github.triggering_actor || github.actor }}
           organization: ${{ github.repository_owner }}
