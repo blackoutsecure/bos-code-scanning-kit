@@ -118,9 +118,38 @@ def test_quality_applicability_reports_detected_code_types(tmp_path: Path):
 def test_quality_applicability_explains_not_applicable_types(tmp_path: Path):
     applicability = detect_mod.detect(tmp_path).quality_applicability()
 
-    for quality in ("node", "python", "shell"):
+    for quality in ("node", "python", "shell", "rust"):
         assert applicability[quality]["applicable"] is False
         assert "No " in applicability[quality]["reason"]
+
+
+def test_rust_quality_is_detected_without_other_ecosystems(tmp_path: Path):
+    (tmp_path / "Cargo.toml").write_text("[workspace]\nmembers = []\n")
+
+    applicability = detect_mod.detect(tmp_path).quality_applicability()
+
+    assert applicability["rust"]["applicable"] is True
+    assert applicability["rust"]["signals"] == ["rust"]
+    assert applicability["node"]["applicable"] is False
+    assert applicability["python"]["applicable"] is False
+
+
+def test_rust_quality_accepts_source_and_lockfile_signals(tmp_path: Path):
+    (tmp_path / "lib.rs").write_text("pub fn ready() -> bool { true }\n")
+    (tmp_path / "Cargo.lock").write_text("version = 4\n")
+
+    applicability = detect_mod.detect(tmp_path).quality_applicability()
+
+    assert applicability["rust"]["signals"] == ["cargo", "rust"]
+    assert "Rust signals detected" in applicability["rust"]["reason"]
+
+
+def test_build_output_does_not_enable_rust_quality(tmp_path: Path):
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "generated.rs").write_text("pub struct Generated;\n")
+
+    assert detect_mod.detect(tmp_path).quality_applicability()["rust"]["applicable"] is False
 
 
 def test_bats_is_shell_quality_signal(tmp_path: Path):

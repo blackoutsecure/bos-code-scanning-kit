@@ -160,6 +160,12 @@ class Detection:
             if "shell" in self.languages or "shell" in self.artifact_types
             else set()
         )
+        rust_signals = sorted(
+            {
+                *({"rust"} if "rust" in self.languages else set()),
+                *({"cargo"} if "cargo" in self.package_managers else set()),
+            }
+        )
 
         def result(signals: list[str], label: str) -> dict[str, object]:
             if signals:
@@ -178,6 +184,7 @@ class Detection:
             "node": result(node_signals, "Node"),
             "python": result(python_signals, "Python"),
             "shell": result(shell_signals, "Shell"),
+            "rust": result(rust_signals, "Rust"),
         }
 
     def to_dict(self) -> dict[str, object]:

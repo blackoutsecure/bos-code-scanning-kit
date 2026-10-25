@@ -146,7 +146,7 @@ inputs:
 outputs:
   quality_applicability:
     description: >-
-      JSON object describing whether Node, Python, and Shell quality gates
+      JSON object describing whether Node, Python, Shell, and Rust quality gates
       apply to the checked-out repository and why.
     value: ${{ steps.detect.outputs.quality_applicability }}
   sarif_path:

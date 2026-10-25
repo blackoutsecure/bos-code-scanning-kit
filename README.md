@@ -223,7 +223,7 @@ the `commit` field of the GitHub Release JSON.
 <!-- BEGIN action-outputs -->
 | Output | Description |
 | --- | --- |
-| `quality_applicability` | JSON object describing whether Node, Python, and Shell quality gates apply to the checked-out repository and why. |
+| `quality_applicability` | JSON object describing whether Node, Python, Shell, and Rust quality gates apply to the checked-out repository and why. |
 | `sarif_path` | Path to the merged SARIF file produced by the run. |
 | `posture_failures` | Number of FAIL findings from the posture audit. |
 | `recommendations_path` | Path to structured posture remediation recommendations. |
